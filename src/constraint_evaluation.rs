@@ -125,7 +125,11 @@ pub fn get_specialized_evaluators_from_assembly<
             .get(&gate_type_id)
             .copied()
             .expect("gate must be allowed");
-        let GatePlacementStrategy::UseSpecializedColumns { num_repetitions, share_constants } = placement_strategy else {
+        let GatePlacementStrategy::UseSpecializedColumns {
+            num_repetitions,
+            share_constants,
+        } = placement_strategy
+        else {
             unreachable!();
         };
         assert_eq!(evaluator.num_repetitions_on_row, num_repetitions);
