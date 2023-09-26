@@ -12,9 +12,9 @@ edition = "2021"
 # circuit_definitions = { path = "../zkevm_test_harness/circuit_definitions", package = "circuit_definitions", optional = true }
 
 boojum = {git = "https://github.com/matter-labs/era-boojum", branch = "main"}
-boojum-cuda = {git = "https://github.com/matter-labs/boojum-cuda", branch = "main", package = "boojum-cuda"}
-cudart= {git = "https://github.com/matter-labs/boojum-cuda", branch = "main", package = "cudart"}
-circuit_definitions = {git = "https://github.com/matter-labs/zkevm_test_harness", branch = "v1.4.0", package = "circuit_definitions", optional = true}
+boojum-cuda = {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main", package = "boojum-cuda"}
+cudart= {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main", package = "cudart"}
+circuit_definitions = {git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.4.0", package = "circuit_definitions", optional = true}
 
 rand = "0.8"
 smallvec = { version = "*", features = [
