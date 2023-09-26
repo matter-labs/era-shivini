@@ -1,0 +1,39 @@
+[package]
+name = "shivini"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# boojum = { path = "../boojum" }
+# boojum-cuda = { path = "../boojum-cuda/boojum-cuda" }
+# cudart = { path = "../boojum-cuda/cudart", package = "cudart" }
+# circuit_definitions = { path = "../zkevm_test_harness/circuit_definitions", package = "circuit_definitions", optional = true }
+
+boojum = {git = "https://github.com/matter-labs/era-boojum", branch = "main"}
+boojum-cuda = {git = "https://github.com/matter-labs/boojum-cuda", branch = "main", package = "boojum-cuda"}
+cudart= {git = "https://github.com/matter-labs/boojum-cuda", branch = "main", package = "cudart"}
+circuit_definitions = {git = "https://github.com/matter-labs/zkevm_test_harness", branch = "v1.4.0", package = "circuit_definitions", optional = true}
+
+rand = "0.8"
+smallvec = { version = "*", features = [
+    "const_generics",
+    "const_new",
+    "serde",
+] }
+sha2 = "0.10"
+blake2 = "0.10"
+hex = "*"
+derivative = "*"
+bincode = "*"
+serde = { version = "1.0", features = ["derive"] }
+
+
+[dev-dependencies]
+serial_test = "^2"
+
+[features]
+default = ["zksync"]
+zksync = ["circuit_definitions"]
+recompute = []
