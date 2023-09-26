@@ -1,6 +1,9 @@
 use boojum::{
     cs::{
-        implementations::{proof::OracleQuery, witness::{WitnessVec, WitnessSet,}},
+        implementations::{
+            proof::OracleQuery,
+            witness::{WitnessSet, WitnessVec},
+        },
         oracle::TreeHasher,
         traits::GoodAllocator,
         LookupParameters,
@@ -400,7 +403,6 @@ impl GenericTraceStorage<MonomialBasis> {
         let Self {
             mut storage,
             layout,
-
             ..
         } = self;
         let domain_size = storage.domain_size;

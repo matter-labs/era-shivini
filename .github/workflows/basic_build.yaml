@@ -1,0 +1,59 @@
+name: Shivini build and unit test
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "akash-chandrakar-ci-update"]
+
+jobs:
+  shivini-build-test:
+    runs-on: [matterlabs-ci-gpu-runner]
+    steps:
+      - name: Prepare environment
+        run: |
+          sudo apt update && sudo apt install -y \
+            pkg-config libclang-dev build-essential lldb lld \
+            clang openssl libssl-dev gcc g++ pkg-config libclang-dev \
+            curl wget 
+          echo "/usr/local/nvidia/bin:/usr/local/cuda/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # v3
+
+      - name: Setup rustup
+        run: |
+          wget -q -O - https://sh.rustup.rs | bash -s -- -y
+          echo "${HOME}/.cargo/bin" >> "${GITHUB_PATH}"
+          echo "CARGO_BUILD_JOBS=$(($(nproc) /2))" >> "${GITHUB_ENV}"
+          echo "export PATH=\"$HOME/.cargo/bin:\$PATH\"" >> "${HOME}/.bash_profile"
+
+      - name: Setup cmake
+        run: |
+          curl -LO https://github.com/Kitware/CMake/releases/download/v3.24.3/cmake-3.24.3-linux-x86_64.sh && \
+          sudo chmod +x cmake-3.24.3-linux-x86_64.sh && \
+          sudo ./cmake-3.24.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+
+      - name: Check nvidia driver version
+        run: |
+          nvidia-smi
+
+      - name: Check CMake version
+        run: |
+          cmake --version
+
+      - name: Check CUDA version
+        run: |
+          nvcc --version
+
+      - name: setup rust
+        run: |
+          rustup set profile minimal
+          rustup toolchain install nightly-2023-04-17
+          rustup default nightly-2023-04-17
+
+      - name: build
+        run: |
+          cargo +nightly-2023-04-17 build --release
+
+      - name: test
+        run: |
+          cargo +nightly-2023-04-17 test --release
