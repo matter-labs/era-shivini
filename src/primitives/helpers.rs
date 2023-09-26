@@ -1,5 +1,5 @@
 use boojum_cuda::{
-    ops_complex::{get_powers_of_g, get_powers_of_w,},
+    ops_complex::{get_powers_of_g, get_powers_of_w},
     ops_cub::device_scan::get_scan_temp_storage_bytes,
     ops_simple::{set_by_ref, set_to_zero},
 };

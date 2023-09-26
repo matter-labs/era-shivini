@@ -3,6 +3,7 @@ use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSet
 use super::*;
 use std::{path::Path, sync::Arc};
 
+use boojum::cs::implementations::setup::FinalizationHintsForProver;
 use boojum::{
     config::{CSConfig, DevCSConfig, ProvingCSConfig, SetupCSConfig},
     cs::{
@@ -30,7 +31,6 @@ use boojum::{
     },
     worker::Worker,
 };
-use boojum::cs::implementations::setup::FinalizationHintsForProver;
 
 use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 
