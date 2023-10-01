@@ -71,8 +71,28 @@ pub fn scale(this: &mut [F], value: &DF) -> CudaResult<()> {
 }
 
 pub fn inverse(values: &mut [F]) -> CudaResult<()> {
-    let values = unsafe { DeviceSlice::from_mut_slice(values) };
-    inv_in_place(values, get_stream())
+    let values_vector = unsafe { DeviceSlice::from_mut_slice(values) };
+    boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
+}
+
+pub fn inverse_ef(c0: &mut [F], c1: &mut [F]) -> CudaResult<()> {
+    use std::slice;
+    type VEF = VectorizedExtensionField;
+
+    let domain_size = c0.len();
+    let c0_ptr = c0.as_ptr();
+    unsafe {
+        assert_eq!(
+            c0_ptr.add(domain_size),
+            c1.as_ptr()
+        );
+    }
+    let values_ptr = c0_ptr as *mut VEF;
+    let mut values_slice: &mut [VEF] =
+        unsafe { slice::from_raw_parts_mut(values_ptr, domain_size) };
+    let values_vector = unsafe { DeviceSlice::from_mut_slice(&mut values_slice) };
+
+    boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
 }
 
 pub fn negate(values: &mut [F]) -> CudaResult<()> {

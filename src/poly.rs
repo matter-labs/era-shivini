@@ -735,21 +735,22 @@ macro_rules! impl_common_complex_poly {
 
             #[allow(dead_code)]
             pub fn inverse(&mut self) -> CudaResult<()> {
-                let mut t0 = self.c0.clone();
-                let mut t1 = self.c1.clone();
-                let non_residue = DF::non_residue()?;
+                arith::inverse_ef(self.c0.storage.as_mut(), self.c1.storage.as_mut())
+                // let mut t0 = self.c0.clone();
+                // let mut t1 = self.c1.clone();
+                // let non_residue = DF::non_residue()?;
 
-                t0.square()?;
-                t1.square()?;
-                t1.scale(&non_residue)?;
-                t0.sub_assign(&t1)?;
-                t0.inverse()?;
+                // t0.square()?;
+                // t1.square()?;
+                // t1.scale(&non_residue)?;
+                // t0.sub_assign(&t1)?;
+                // t0.inverse()?;
 
-                self.c0.mul_assign(&t0)?;
-                self.c1.negate()?;
-                self.c1.mul_assign(&t0)?;
+                // self.c0.mul_assign(&t0)?;
+                // self.c1.negate()?;
+                // self.c1.mul_assign(&t0)?;
 
-                Ok(())
+                // Ok(())
             }
 
             #[allow(dead_code)]
