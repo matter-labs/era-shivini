@@ -82,10 +82,7 @@ pub fn inverse_ef(c0: &mut [F], c1: &mut [F]) -> CudaResult<()> {
     let domain_size = c0.len();
     let c0_ptr = c0.as_ptr();
     unsafe {
-        assert_eq!(
-            c0_ptr.add(domain_size),
-            c1.as_ptr()
-        );
+        assert_eq!(c0_ptr.add(domain_size), c1.as_ptr());
     }
     let values_ptr = c0_ptr as *mut VEF;
     let mut values_slice: &mut [VEF] =
