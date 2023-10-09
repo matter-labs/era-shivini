@@ -5,7 +5,7 @@ use derivative::*;
 use std::alloc::{Allocator, Layout};
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Derivative)]
@@ -16,6 +16,13 @@ pub struct StaticDeviceAllocator {
     block_size_in_bytes: usize,
     // TODO: Can we use deque
     bitmap: Arc<Vec<AtomicBool>>,
+    maximum_tail_index: Arc<AtomicUsize>,
+}
+
+pub struct AllocationStats {
+    pub current_block_count: usize,
+    pub current_tail_index: usize,
+    pub maximum_tail_index: usize,
 }
 
 impl Default for StaticDeviceAllocator {
@@ -64,6 +71,7 @@ impl StaticDeviceAllocator {
             memory_size: memory_size_in_bytes,
             block_size_in_bytes,
             bitmap: Arc::new(Self::init_bitmap(num_blocks)),
+            maximum_tail_index: Arc::new(AtomicUsize::new(0)),
         };
 
         Ok(alloc)
@@ -168,6 +176,21 @@ impl StaticDeviceAllocator {
         memory.free()?;
         Ok(())
     }
+
+    pub fn get_allocation_stats(&self) -> AllocationStats {
+        let (count, max) = self
+            .bitmap
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.load(Ordering::SeqCst))
+            .map(|(i, _)| i)
+            .fold((0usize, 0usize), |(c, _), i| (c + 1, i + 1));
+        AllocationStats {
+            current_block_count: count,
+            current_tail_index: max,
+            maximum_tail_index: self.maximum_tail_index.load(Ordering::SeqCst),
+        }
+    }
 }
 
 unsafe impl Send for StaticDeviceAllocator {}
@@ -183,6 +206,8 @@ unsafe impl Allocator for StaticDeviceAllocator {
         if size > self.block_size_in_bytes {
             let num_blocks = size / self.block_size_in_bytes;
             if let Some(range) = self.find_adjacent_free_blocks(num_blocks) {
+                self.maximum_tail_index
+                    .fetch_max(range.end, Ordering::SeqCst);
                 let index = range.start;
                 let offset = index * self.block_size_in_bytes;
                 let ptr = unsafe { self.as_ptr().add(offset) };
@@ -194,6 +219,8 @@ unsafe impl Allocator for StaticDeviceAllocator {
         }
 
         if let Some(index) = self.find_free_block() {
+            self.maximum_tail_index
+                .fetch_max(index + 1, Ordering::SeqCst);
             let offset = index * self.block_size_in_bytes;
             let ptr = unsafe { self.as_ptr().add(offset) };
             let ptr = unsafe { NonNull::new_unchecked(ptr as _) };
@@ -232,7 +259,7 @@ impl SmallStaticDeviceAllocator {
     pub fn init() -> CudaResult<Self> {
         // cuda requires alignment to be  multiple of 32 goldilocks elems
         let block_size = 32;
-        let num_blocks = 1 << 20; // <1gb
+        let num_blocks = 1 << 10; // 256 KB
         let inner = StaticDeviceAllocator::init(num_blocks, block_size)?;
         Ok(Self { inner })
     }
@@ -243,6 +270,10 @@ impl SmallStaticDeviceAllocator {
 
     pub fn block_size_in_bytes(&self) -> usize {
         self.inner.block_size_in_bytes
+    }
+
+    pub fn get_allocation_stats(&self) -> AllocationStats {
+        self.inner.get_allocation_stats()
     }
 }
 

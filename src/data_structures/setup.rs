@@ -2,6 +2,7 @@ use boojum::cs::{
     implementations::{polynomial_storage::SetupBaseStorage, proof::OracleQuery},
     oracle::TreeHasher,
 };
+use std::rc::Rc;
 
 use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
 
@@ -365,8 +366,7 @@ impl GenericSetupStorage<CosetEvaluations> {
 
 pub struct SetupCache {
     monomials: GenericSetupStorage<MonomialBasis>,
-    cosets: Vec<Option<GenericSetupStorage<CosetEvaluations>>>,
-    tmp_coset: GenericSetupStorage<CosetEvaluations>,
+    cosets: Vec<Option<Rc<GenericSetupStorage<CosetEvaluations>>>>,
     fri_lde_degree: usize,
     used_lde_degree: usize,
 }
@@ -379,19 +379,12 @@ impl SetupCache {
     ) -> CudaResult<Self> {
         assert!(fri_lde_degree.is_power_of_two());
         assert!(used_lde_degree.is_power_of_two());
-        let domain_size = monomial_setup.domain_size();
 
-        let mut cosets = Vec::with_capacity(fri_lde_degree);
-        for _ in 0..fri_lde_degree {
-            cosets.push(None);
-        }
-
-        let tmp_coset = GenericSetupStorage::allocate(monomial_setup.layout.clone(), domain_size)?;
+        let cosets = vec![None; fri_lde_degree];
 
         let this = Self {
             monomials: monomial_setup,
             cosets,
-            tmp_coset,
             fri_lde_degree,
             used_lde_degree,
         };
@@ -429,13 +422,17 @@ impl SetupCache {
     pub fn get_or_compute_coset_evals(
         &mut self,
         coset_idx: usize,
-    ) -> CudaResult<&GenericSetupStorage<CosetEvaluations>> {
+    ) -> CudaResult<Rc<GenericSetupStorage<CosetEvaluations>>> {
         assert!(coset_idx < self.used_lde_degree);
 
         if REMEMBER_COSETS == false || coset_idx >= self.fri_lde_degree {
+            let mut tmp_coset = GenericSetupStorage::allocate(
+                self.monomials.layout.clone(),
+                self.monomials.domain_size(),
+            )?;
             self.monomials
-                .into_coset_eval(coset_idx, self.used_lde_degree, &mut self.tmp_coset)?;
-            return Ok(&self.tmp_coset);
+                .into_coset_eval(coset_idx, self.used_lde_degree, &mut tmp_coset)?;
+            return Ok(Rc::new(tmp_coset));
         }
 
         if self.cosets[coset_idx].is_none() {
@@ -449,10 +446,10 @@ impl SetupCache {
                 self.used_lde_degree,
                 &mut current_storage,
             )?;
-            self.cosets[coset_idx] = Some(current_storage);
+            self.cosets[coset_idx] = Some(Rc::new(current_storage));
         }
 
-        return Ok(self.cosets[coset_idx].as_ref().unwrap());
+        return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
     }
 
     #[allow(dead_code)]
