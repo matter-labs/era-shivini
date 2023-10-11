@@ -19,6 +19,8 @@ pub struct StaticDeviceAllocator {
     maximum_tail_index: Arc<AtomicUsize>,
 }
 
+#[derive(Derivative)]
+#[derivative(Clone, Debug)]
 pub struct AllocationStats {
     pub current_block_count: usize,
     pub current_tail_index: usize,
