@@ -1077,19 +1077,24 @@ fn compute_deep_quotiening_over_coset(
 
     let denom_at_z = compute_denom_at_ext_point(&roots, &z)?;
     let denom_at_z_omega = compute_denom_at_ext_point(&roots, &z_omega)?;
-    let denom_at_zero = compute_denom_at_base_point(&roots, &DF::zero()?)?;
 
-    let (maybe_multiplicity_cols, maybe_lookup_a_polys, maybe_lookup_b_polys, maybe_table_cols) =
-        if argument_polys.lookup_a_polys.len() > 0 {
-            (
-                Some(&trace_polys.multiplicity_cols),
-                Some(argument_polys.lookup_a_polys),
-                Some(argument_polys.lookup_b_polys),
-                Some(&setup_polys.table_cols),
-            )
-        } else {
-            (None, None, None, None)
-        };
+    let (
+        maybe_multiplicity_cols,
+        maybe_lookup_a_polys,
+        maybe_lookup_b_polys,
+        maybe_table_cols,
+        maybe_denom_at_zero,
+    ) = if argument_polys.lookup_a_polys.len() > 0 {
+        (
+            Some(&trace_polys.multiplicity_cols),
+            Some(argument_polys.lookup_a_polys),
+            Some(argument_polys.lookup_b_polys),
+            Some(&setup_polys.table_cols),
+            Some(compute_denom_at_base_point(&roots, &DF::zero()?)?),
+        )
+    } else {
+        (None, None, None, None, None)
+    };
 
     let maybe_witness_cols = if trace_polys.witness_cols.len() > 0 {
         Some(&trace_polys.witness_cols)
@@ -1120,7 +1125,7 @@ fn compute_deep_quotiening_over_coset(
         &challenges[..challenges.len() - num_public_inputs],
         &denom_at_z,
         &denom_at_z_omega,
-        &denom_at_zero,
+        &maybe_denom_at_zero,
         &mut quotient,
     )?;
 
