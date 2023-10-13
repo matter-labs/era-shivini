@@ -962,7 +962,7 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
     challenges: &[EF],
     denom_at_z: &ComplexPoly<'a, CosetEvaluations>,
     denom_at_z_omega: &ComplexPoly<'a, CosetEvaluations>,
-    denom_at_zero: &Poly<'a, CosetEvaluations>,
+    maybe_denom_at_zero: &Option<Poly<'a, CosetEvaluations>>,
     quotient: &mut ComplexPoly<'b, CosetEvaluations>,
 ) -> CudaResult<()> {
     use std::slice;
@@ -989,6 +989,10 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
     assert_eq!(
         maybe_multiplicity_cols.is_none(),
         evaluations_at_zero.is_none()
+    );
+    assert_eq!(
+        maybe_multiplicity_cols.is_none(),
+        maybe_denom_at_zero.is_none()
     );
 
     let (multiplicity_cols_len, multiplicity_cols_ptr) =
@@ -1042,6 +1046,14 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
         )
     } else {
         (0 as usize, std::ptr::null::<EF>())
+    };
+    let (denom_at_zero_len, denom_at_zero_ptr) = if maybe_denom_at_zero.is_some() {
+        let denom_at_zero_ref = maybe_denom_at_zero.as_ref().expect("must exist");
+        let len = denom_at_zero_ref.storage.len();
+        assert_eq!(len, domain_size);
+        (len, denom_at_zero_ref.storage.as_ref().as_ptr())
+    } else {
+        (0 as usize, std::ptr::null::<F>())
     };
 
     let mut num_terms_at_z = 0;
@@ -1176,9 +1188,8 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
         unsafe { slice::from_raw_parts(denom_at_z_omega_ptr, domain_size) };
     let denom_at_z_omega_vector = unsafe { DeviceSlice::from_slice(&denom_at_z_omega_slice) };
 
-    assert_eq!(denom_at_zero.storage.len(), domain_size);
-    let denom_at_zero_ptr = denom_at_zero.storage.as_ref().as_ptr() as *const F;
-    let denom_at_zero_slice = unsafe { slice::from_raw_parts(denom_at_zero_ptr, domain_size) };
+    let denom_at_zero_slice =
+        unsafe { slice::from_raw_parts(denom_at_zero_ptr, denom_at_zero_len) };
     let denom_at_zero_vector = unsafe { DeviceSlice::from_slice(&denom_at_zero_slice) };
 
     let quotient_c0_ptr = quotient.c0.storage.as_ref().as_ptr();
