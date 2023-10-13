@@ -5,8 +5,11 @@ use derivative::*;
 use std::alloc::{Allocator, Layout};
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+#[cfg(feature = "allocator_stats")]
+use std::sync::atomic::AtomicUsize;
 
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
@@ -16,9 +19,11 @@ pub struct StaticDeviceAllocator {
     block_size_in_bytes: usize,
     // TODO: Can we use deque
     bitmap: Arc<Vec<AtomicBool>>,
+    #[cfg(feature = "allocator_stats")]
     maximum_tail_index: Arc<AtomicUsize>,
 }
 
+#[cfg(feature = "allocator_stats")]
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
 pub struct AllocationStats {
@@ -73,6 +78,7 @@ impl StaticDeviceAllocator {
             memory_size: memory_size_in_bytes,
             block_size_in_bytes,
             bitmap: Arc::new(Self::init_bitmap(num_blocks)),
+            #[cfg(feature = "allocator_stats")]
             maximum_tail_index: Arc::new(AtomicUsize::new(0)),
         };
 
@@ -179,6 +185,7 @@ impl StaticDeviceAllocator {
         Ok(())
     }
 
+    #[cfg(feature = "allocator_stats")]
     pub fn get_allocation_stats(&self) -> AllocationStats {
         let (count, max) = self
             .bitmap
@@ -208,6 +215,7 @@ unsafe impl Allocator for StaticDeviceAllocator {
         if size > self.block_size_in_bytes {
             let num_blocks = size / self.block_size_in_bytes;
             if let Some(range) = self.find_adjacent_free_blocks(num_blocks) {
+                #[cfg(feature = "allocator_stats")]
                 self.maximum_tail_index
                     .fetch_max(range.end, Ordering::SeqCst);
                 let index = range.start;
@@ -221,6 +229,7 @@ unsafe impl Allocator for StaticDeviceAllocator {
         }
 
         if let Some(index) = self.find_free_block() {
+            #[cfg(feature = "allocator_stats")]
             self.maximum_tail_index
                 .fetch_max(index + 1, Ordering::SeqCst);
             let offset = index * self.block_size_in_bytes;
@@ -274,6 +283,7 @@ impl SmallStaticDeviceAllocator {
         self.inner.block_size_in_bytes
     }
 
+    #[cfg(feature = "allocator_stats")]
     pub fn get_allocation_stats(&self) -> AllocationStats {
         self.inner.get_allocation_stats()
     }
