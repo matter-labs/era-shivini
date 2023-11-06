@@ -197,85 +197,53 @@ pub fn compute_omega_values_for_coset(
 
     Ok(Poly::from(omega_values))
 }
-
-pub fn assert_adjacent<P: PolyForm>(src: &[Poly<P>]) {
+pub fn assert_adjacent<T>(src: &[&[T]]) {
     if src.is_empty() {
         return;
     }
-    let mut prev_ptr = src[0].storage.as_ref().as_ptr();
-    let domain_size = src[0].domain_size();
+    let mut prev_ptr = src[0].as_ref().as_ptr();
+    let domain_size = src[0].len();
     unsafe {
         for p in src[1..].iter() {
+            assert_eq!(p.len(), domain_size);
             let this_ptr = prev_ptr.add(domain_size);
-            assert!(std::ptr::eq(p.storage.as_ref().as_ptr(), this_ptr));
+            assert!(std::ptr::eq(p.as_ref().as_ptr(), this_ptr));
             prev_ptr = this_ptr;
         }
     }
 }
 
-pub fn assert_multiset_adjacent<P: PolyForm>(src: &[&[Poly<P>]]) {
+pub fn assert_adjacent_base<P: PolyForm>(src: &[Poly<P>]) {
+    let inner_values: Vec<_> = src.iter().map(|p| p.storage.as_ref()).collect();
+    assert_adjacent(&inner_values);
+}
+
+pub fn assert_multiset_adjacent_base<P: PolyForm>(src: &[&[Poly<P>]]) {
     let mut flattened = vec![];
     for p in src.iter() {
         for sp in p.iter() {
-            flattened.push(sp);
+            flattened.push(sp.storage.as_ref());
         }
     }
-    if flattened.is_empty() {
-        return;
-    }
-
-    let mut prev_ptr = flattened[0].storage.as_ref().as_ptr();
-    let domain_size = flattened[0].domain_size();
-    unsafe {
-        for p in flattened[1..].iter() {
-            let this_ptr = prev_ptr.add(domain_size);
-            assert!(std::ptr::eq(p.storage.as_ref().as_ptr(), this_ptr));
-            prev_ptr = this_ptr;
-        }
-    }
+    assert_adjacent(&flattened[..])
 }
 
 pub fn assert_adjacent_ext<P: PolyForm>(src: &[ComplexPoly<P>]) {
     let mut flattened = vec![];
     for p in src.iter() {
-        flattened.push(&p.c0);
-        flattened.push(&p.c1);
+        flattened.push(p.c0.storage.as_ref());
+        flattened.push(p.c1.storage.as_ref());
     }
-
-    if flattened.is_empty() {
-        return;
-    }
-
-    let mut prev_ptr = flattened[0].storage.as_ref().as_ptr();
-    let domain_size = src[0].domain_size();
-    unsafe {
-        for p in flattened[1..].iter() {
-            let this_ptr = prev_ptr.add(domain_size);
-            assert!(std::ptr::eq(p.storage.as_ref().as_ptr(), this_ptr));
-            prev_ptr = this_ptr;
-        }
-    }
+    assert_adjacent(&flattened[..])
 }
 
 pub fn assert_multiset_adjacent_ext<P: PolyForm>(src: &[&[ComplexPoly<P>]]) {
     let mut flattened = vec![];
     for p in src.iter() {
         for sp in p.iter() {
-            flattened.push(&sp.c0);
-            flattened.push(&sp.c1);
+            flattened.push(sp.c0.storage.as_ref());
+            flattened.push(sp.c1.storage.as_ref());
         }
     }
-    if flattened.is_empty() {
-        return;
-    }
-
-    let mut prev_ptr = flattened[0].storage.as_ref().as_ptr();
-    let domain_size = flattened[0].domain_size();
-    unsafe {
-        for p in flattened[1..].iter() {
-            let this_ptr = prev_ptr.add(domain_size);
-            assert!(std::ptr::eq(p.storage.as_ref().as_ptr(), this_ptr));
-            prev_ptr = this_ptr;
-        }
-    }
+    assert_adjacent(&flattened[..])
 }

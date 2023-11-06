@@ -1,6 +1,7 @@
-use std::alloc::Global;
+use std::{
+    alloc::Global, collections::HashMap, mem::ManuallyDrop, ops::Deref, sync::atomic::AtomicU32,
+};
 
-#[allow(unused_imports)]
 use boojum::{
     config::{CSConfig, CSSetupConfig, CSWitnessEvaluationConfig, ProvingCSConfig},
     cs::{
@@ -15,7 +16,7 @@ use boojum::{
             proof::{self, OracleQuery, Proof, SingleRoundQueries},
             prover::ProofConfig,
             reference_cs::{CSReferenceAssembly, CSReferenceImplementation},
-            setup,
+            setup::{self, TreeNode},
             transcript::Transcript,
             utils::{domain_generator_for_size, materialize_powers_serial},
             verifier::VerificationKey,
@@ -24,14 +25,18 @@ use boojum::{
         oracle::{merkle_tree::MerkleTreeWithCap, TreeHasher},
         toolboxes::{gate_config::GateConfigurationHolder, static_toolbox::StaticToolboxHolder},
         traits::{gate::GatePlacementStrategy, GoodAllocator},
-        CSGeometry, LookupParameters,
+        CSGeometry, LookupParameters, Place, Variable, Witness,
     },
     field::{traits::field_like::TrivialContext, FieldExtension, U64Representable},
     worker::Worker,
 };
+use smallvec::SmallVec;
 
-use crate::arith::{deep_quotient_except_public_inputs, deep_quotient_public_input};
 use crate::cs::GpuSetup;
+use crate::{
+    arith::{deep_quotient_except_public_inputs, deep_quotient_public_input},
+    cs::PACKED_PLACEHOLDER_BITMASK,
+};
 
 use super::*;
 
@@ -42,14 +47,15 @@ pub fn gpu_prove_from_external_witness_data<
     POW: PoWRunner,
     A: GoodAllocator,
 >(
-    cs: CSReferenceAssembly<F, P, ProvingCSConfig>,
-    external_witness_data: &WitnessVec<F>,
+    // service layer reuses assembly for repeated proving, so that just borrow it
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    external_witness_data: &WitnessVec<F>, // TODO: read data from Assembly pinned storage
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
-) -> CudaResult<Proof<F, H, EXT>> {
+) -> CudaResult<GpuProof<A>> {
     // TODO: this is a convenient function that is made for externally synthesized circuits
     // but local synthesis also use this fn. re-enable this check once deployments are done
     // assert_eq!(
@@ -57,27 +63,41 @@ pub fn gpu_prove_from_external_witness_data<
     //     0,
     //     "CS should be empty and hold no data"
     // );
+    unsafe {
+        assert!(
+            _cuda_context.is_some(),
+            "prover context should be initialized"
+        )
+    };
 
     let num_variable_cols = setup.variables_hint.len();
+    let num_witness_cols = setup.witnesses_hint.len();
     let num_multiplicity_cols = cs.num_multipicities_polys();
-    dbg!(num_variable_cols);
     let trace_layout = TraceLayout {
         num_variable_cols,
-        num_witness_cols: 0,
+        num_witness_cols,
         num_multiplicity_cols,
     };
     dbg!(&trace_layout);
     let domain_size = cs.max_trace_len;
-    let (raw_trace, monomial_trace) = construct_trace_storage_from_external_witness_data(
-        trace_layout,
-        domain_size,
-        setup,
-        &external_witness_data,
-        &cs.lookup_parameters,
-        worker,
-    )?;
+    let start = std::time::Instant::now();
+    let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+    let used_lde_degree = usize::max(quotient_degree, proof_config.fri_lde_factor);
+    let (raw_trace, monomial_trace, subtrees, trace_tree_cap) =
+        construct_trace_storage_from_remote_witness_data(
+            trace_layout.clone(),
+            used_lde_degree,
+            proof_config.fri_lde_factor,
+            domain_size,
+            setup,
+            &external_witness_data,
+            &cs.lookup_parameters,
+            worker,
+        )?;
+    synchronize_streams()?;
+    println!("on device variable assignment takes {:?}", start.elapsed());
     let num_public_inputs = external_witness_data.public_inputs_locations.len();
-    assert!(num_public_inputs > 0);
+    // assert!(num_public_inputs > 0); // TODO
     // external witness already knows both locations of public input and values of them
     let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
     for (col, row) in external_witness_data
@@ -89,10 +109,12 @@ pub fn gpu_prove_from_external_witness_data<
         let value = external_witness_data.all_values[variable_idx];
         public_inputs_with_locations.push((col, row, value));
     }
-    gpu_prove_from_trace::<_, _, TR, _, NoPow, _>(
+    gpu_prove_from_trace::<_, TR, _, NoPow, _>(
         cs,
         raw_trace,
         monomial_trace,
+        subtrees,
+        trace_tree_cap,
         public_inputs_with_locations,
         setup,
         proof_config,
@@ -100,6 +122,146 @@ pub fn gpu_prove_from_external_witness_data<
         transcript_params,
         worker,
     )
+}
+// allocate both hints and result through same allocator
+pub fn materialize_variable_cols_from_hints<
+    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    A: GoodAllocator,
+>(
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    hints: &[Vec<u32, A>],
+    worker: &Worker,
+) -> Vec<Vec<F, A>> {
+    let domain_size = cs.max_trace_len;
+    assert!(domain_size.is_power_of_two());
+    let num_cols = hints.len();
+    // assume that dag is resolved;
+    use boojum::dag::WitnessSource;
+    let vars_storage = &cs.variables_storage.read().unwrap();
+    assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
+
+    let mut result: Vec<_> = (0..num_cols)
+        .map(|_| {
+            let mut col = Vec::with_capacity_in(domain_size, A::default());
+            col.resize(domain_size, F::ZERO);
+            col
+        })
+        .collect();
+    worker.scope(result.len(), |scope, chunk_size| {
+        for (vars_chunk, polys_chunk) in hints.chunks(chunk_size).zip(result.chunks_mut(chunk_size))
+        {
+            scope.spawn(move |_| {
+                debug_assert_eq!(vars_chunk.len(), polys_chunk.len());
+                for (vars_column, poly) in vars_chunk.iter().zip(polys_chunk.iter_mut()) {
+                    unsafe {
+                        poly.set_len(domain_size);
+                    }
+                    for (var, dst) in vars_column.iter().zip(poly.iter_mut()) {
+                        if var & PACKED_PLACEHOLDER_BITMASK == 0 {
+                            let place =
+                                Place::from_variable(Variable::from_variable_index(*var as u64));
+                            *dst = vars_storage.get_value_unchecked(place);
+                        } else {
+                            // we can use 0 as a substitue for all undefined variables,
+                            // or add ZK into them
+                        }
+                    }
+                }
+            });
+        }
+    });
+    result
+}
+
+pub fn materialzie_witness_cols_from_hints<
+    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    A: GoodAllocator,
+>(
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    hints: &[Vec<u32, A>],
+    worker: &Worker,
+) -> Vec<Vec<F, A>> {
+    let domain_size = cs.max_trace_len;
+    assert!(domain_size.is_power_of_two());
+    // assume that dag is resolved;
+    use boojum::dag::WitnessSource;
+    let vars_storage = &cs.variables_storage.read().unwrap();
+    assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
+    let num_cols = hints.len();
+    let mut result: Vec<_> = (0..num_cols)
+        .map(|_| {
+            let mut col = Vec::with_capacity_in(domain_size, A::default());
+            col.resize(domain_size, F::ZERO); // TODO: unsafe set_len?
+            col
+        })
+        .collect();
+    worker.scope(result.len(), |scope, chunk_size| {
+        for (vars_chunk, polys_chunk) in hints.chunks(chunk_size).zip(result.chunks_mut(chunk_size))
+        {
+            scope.spawn(move |_| {
+                debug_assert_eq!(vars_chunk.len(), polys_chunk.len());
+                for (vars_column, poly) in vars_chunk.iter().zip(polys_chunk.iter_mut()) {
+                    unsafe {
+                        poly.set_len(domain_size);
+                    }
+                    for (var, dst) in vars_column.iter().zip(poly.iter_mut()) {
+                        if var & PACKED_PLACEHOLDER_BITMASK == 0 {
+                            let place =
+                                Place::from_witness(Witness::from_witness_index(*var as u64));
+                            *dst = vars_storage.get_value_unchecked(place);
+                        } else {
+                            // we can use 0 as a substitue for all undefined variables,
+                            // or add ZK into them
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    result
+}
+
+pub fn materialize_multiplicities_polynomials<
+    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    A: GoodAllocator,
+>(
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    worker: &Worker,
+) -> Vec<Vec<F, A>> {
+    if cs.lookup_parameters == LookupParameters::NoLookup {
+        return vec![];
+    }
+    let domain_size = cs.max_trace_len;
+    assert!(domain_size.is_power_of_two());
+    let flattening_iter = cs.lookup_multiplicities.iter().flat_map(|el| el.iter());
+    let mut result: Vec<_> = (0..cs.num_multipicities_polys())
+        .map(|_| {
+            let mut col = Vec::with_capacity_in(domain_size, A::default());
+            col.resize(domain_size, F::ZERO);
+            col
+        })
+        .collect();
+    for (idx, dst) in result.iter_mut().enumerate() {
+        let num_to_skip = idx * cs.max_trace_len;
+        let src_it = flattening_iter.clone().skip(num_to_skip);
+
+        worker.scope(dst.len(), |scope, chunk_size| {
+            for (idx, dst) in dst.chunks_mut(chunk_size).enumerate() {
+                let src = src_it.clone().skip(idx * chunk_size);
+                scope.spawn(move |_| {
+                    for (dst, src) in dst.iter_mut().zip(src) {
+                        *dst = F::from_u64_unchecked(AtomicU32::load(
+                            src,
+                            std::sync::atomic::Ordering::SeqCst,
+                        ) as u64);
+                    }
+                });
+            }
+        });
+    }
+
+    result
 }
 
 pub fn gpu_prove<
@@ -109,79 +271,76 @@ pub fn gpu_prove<
     POW: PoWRunner,
     A: GoodAllocator,
 >(
-    mut cs: CSReferenceAssembly<F, P, ProvingCSConfig>,
+    cs: &mut CSReferenceAssembly<F, P, ProvingCSConfig>,
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
-) -> CudaResult<Proof<F, H, EXT>> {
+) -> CudaResult<GpuProof<A>> {
+    unsafe {
+        assert!(
+            _cuda_context.is_some(),
+            "prover context should be initialized"
+        )
+    };
+
+    cs.wait_for_witness();
+    use boojum::dag::WitnessSource;
+    let time = std::time::Instant::now();
     assert!(cs.next_available_place_idx() > 0, "CS shouldn't be empty");
-    // this is a convenient function that made for locally synthesized circuits
-    // neither witness storage is "reusable" nor we have a direct interface to underling storage
-    // so it is okey to materialize them on the host then other convenient function for now
-    let witness_data = cs.materialize_witness_vec();
-    gpu_prove_from_external_witness_data::<_, TR, _, POW, _>(
-        cs,
-        &witness_data,
-        proof_config,
+    let domain_size = cs.max_trace_len;
+    assert!(domain_size.is_power_of_two());
+    let h_variables_cols = materialize_variable_cols_from_hints(&cs, &setup.variables_hint, worker);
+    let h_witnesses_cols = materialzie_witness_cols_from_hints(&cs, &setup.witnesses_hint, worker);
+    let h_multiplicities = materialize_multiplicities_polynomials(&cs, worker);
+    println!(
+        "materialization of {} trace cols are done on host in {:?} with {} cores",
+        h_variables_cols.len() + h_witnesses_cols.len() + h_multiplicities.len(),
+        time.elapsed(),
+        worker.num_cores
+    );
+    let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+    let used_lde_degree = std::cmp::max(proof_config.fri_lde_factor, quotient_degree);
+    let (raw_trace, monomial_trace, subtrees, trace_tree_cap) =
+        construct_trace_storage_from_local_witness_data(
+            h_variables_cols,
+            h_witnesses_cols,
+            h_multiplicities,
+            used_lde_degree,
+            domain_size,
+            &proof_config,
+        )?;
+    let num_public_inputs = cs.public_inputs.len();
+    let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
+    let vars_storage = &cs.variables_storage.read().unwrap();
+    for (col, row) in cs.public_inputs.iter().cloned() {
+        let variable_idx = setup.variables_hint[col][row].clone() as u64;
+        let place = Place::from_variable(Variable::from_variable_index(variable_idx));
+        let value = vars_storage.get_value_unchecked(place);
+        public_inputs_with_locations.push((col, row, value));
+    }
+    gpu_prove_from_trace::<_, TR, _, POW, _>(
+        &cs,
+        raw_trace,
+        monomial_trace,
+        subtrees,
+        trace_tree_cap,
+        public_inputs_with_locations,
         setup,
+        proof_config,
         vk,
         transcript_params,
         worker,
     )
 }
 
-fn gpu_prove_from_trace<
+pub fn compute_quotient_degree<
     P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    CFG: CSConfig,
-    TR: Transcript<F, CompatibleCap = [F; 4]>,
-    H: TreeHasher<F, Output = TR::CompatibleCap>,
-    POW: PoWRunner,
-    A: GoodAllocator,
 >(
-    cs: CSReferenceAssembly<F, P, CFG>,
-    raw_trace: GenericTraceStorage<LagrangeBasis>,
-    monomial_trace: GenericTraceStorage<MonomialBasis>,
-    public_inputs_with_locations: Vec<(usize, usize, F)>,
-    setup_base: &GpuSetup<A>,
-    proof_config: ProofConfig,
-    vk: &VerificationKey<F, H>,
-    transcript_params: TR::TransciptParameters,
-    worker: &Worker,
-) -> CudaResult<Proof<F, H, EXT>> {
-    assert!(proof_config.fri_lde_factor.is_power_of_two());
-    assert!(proof_config.fri_lde_factor > 1);
-
-    let base_system_degree = cs.max_trace_len;
-    assert!(base_system_degree.is_power_of_two());
-
-    unsafe {
-        assert!(
-            _CUDA_CONTEXT.is_some(),
-            "prover context should be initialized"
-        )
-    };
-
-    let cap_size = proof_config.merkle_tree_cap_size;
-    assert!(cap_size > 0);
-
-    let table_ids_column_idxes = setup_base.table_ids_column_idxes.clone();
-
-    let mut transcript = TR::new(transcript_params);
-
-    // Commit to verification key, that should be small
-    transcript.witness_merkle_tree_cap(&vk.setup_merkle_tree_cap);
-
-    let mut owned_ctx = P::Context::placeholder();
-    let _ctx = &mut owned_ctx;
-
-    let selectors_placement = setup_base.selectors_placement.clone();
-
-    let domain_size = setup_base.constant_columns[0].len(); // counted in elements of P
-    assert_eq!(base_system_degree, domain_size);
-    assert!(domain_size.is_power_of_two());
-
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    selectors_placement: &TreeNode,
+) -> usize {
     let (max_constraint_contribution_degree, _number_of_constant_polys) =
         selectors_placement.compute_stats();
 
@@ -211,40 +370,83 @@ fn gpu_prove_from_trace<
         quotient_degree_from_gate_terms.next_power_of_two()
     };
 
-    let quotient_degree = min_lde_degree_for_gates;
+    min_lde_degree_for_gates
+}
 
-    // now we can commit to public inputs also before potentially moving computations to vectorized form
+fn gpu_prove_from_trace<
+    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    TR: Transcript<F, CompatibleCap = [F; 4]>,
+    H: TreeHasher<F, Output = TR::CompatibleCap>,
+    POW: PoWRunner,
+    A: GoodAllocator,
+>(
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    raw_trace: GenericTraceStorage<LagrangeBasis>,
+    monomial_trace: GenericTraceStorage<MonomialBasis>,
+    trace_subtrees: Vec<SubTree>,
+    trace_tree_cap: Vec<[F; 4]>,
+    public_inputs_with_locations: Vec<(usize, usize, F)>,
+    setup_base: &GpuSetup<A>,
+    proof_config: ProofConfig,
+    vk: &VerificationKey<F, H>,
+    transcript_params: TR::TransciptParameters,
+    worker: &Worker,
+) -> CudaResult<GpuProof<A>> {
+    assert!(proof_config.fri_lde_factor.is_power_of_two());
+    assert!(proof_config.fri_lde_factor > 1);
+    assert!(cs.max_trace_len.is_power_of_two());
+
+    let cap_size = proof_config.merkle_tree_cap_size;
+    assert!(cap_size > 0);
+
+    let table_ids_column_idxes = setup_base.table_ids_column_idxes.clone();
+
+    let mut transcript = TR::new(transcript_params);
+    transcript.witness_merkle_tree_cap(&vk.setup_merkle_tree_cap);
     for (_, _, value) in public_inputs_with_locations.iter().copied() {
         transcript.witness_field_elements(&[value]);
     }
 
-    let used_lde_degree = std::cmp::max(proof_config.fri_lde_factor, quotient_degree);
-    let lde_degree = used_lde_degree;
+    let selectors_placement = setup_base.selectors_placement.clone();
+    let domain_size = cs.max_trace_len; // counted in elements of P
+    assert_eq!(setup_base.constant_columns[0].len(), domain_size);
+
+    let quotient_degree = compute_quotient_degree(&cs, &selectors_placement);
     let fri_lde_degree = proof_config.fri_lde_factor;
+    let used_lde_degree = std::cmp::max(fri_lde_degree, quotient_degree);
 
     // cap size shouldn't be part of subtree
     // Immediately transfer raw trace to the device and simultaneously compute monomials of the whole trace
     // Then compute coset evaluations + cap of the sub tree for each coset
     assert!(cap_size.is_power_of_two());
     assert!(fri_lde_degree.is_power_of_two());
+    let coset_cap_size = if cap_size < fri_lde_degree {
+        1
+    } else {
+        assert!(cap_size.is_power_of_two());
+        1 << (cap_size.trailing_zeros() - fri_lde_degree.trailing_zeros())
+    };
 
     let time = std::time::Instant::now();
-    // TODO: read data from Assembly pinned storage
+    let trace_layout = raw_trace.layout.clone();
     let TraceLayout {
-        num_variable_cols, ..
-    } = raw_trace.layout.clone();
+        num_variable_cols,
+        num_witness_cols,
+        num_multiplicity_cols,
+    } = trace_layout.clone();
     let num_trace_polys = raw_trace.num_polys();
     assert_eq!(monomial_trace.domain_size(), domain_size);
     assert_eq!(monomial_trace.num_polys(), num_trace_polys);
     assert_eq!(raw_trace.domain_size(), domain_size);
+
+    assert_eq!(trace_subtrees.len(), proof_config.fri_lde_factor);
+    assert_eq!(trace_tree_cap.len(), proof_config.merkle_tree_cap_size);
     let mut trace_holder =
         TraceCache::from_monomial(monomial_trace, fri_lde_degree, used_lde_degree)?;
-    let (trace_subtrees, trace_tree_cap) = trace_holder.commit::<H>(cap_size)?;
-    // TODO: use cuda callback for transcript
-    transcript.witness_merkle_tree_cap(&trace_tree_cap);
-
     let mut tree_holder = TreeCache::empty(fri_lde_degree);
     tree_holder.set_trace_subtrees(trace_subtrees);
+    // TODO: use cuda callback for transcript
+    transcript.witness_merkle_tree_cap(&trace_tree_cap);
 
     let h_beta = transcript.get_multiple_challenges_fixed::<2>();
     let h_beta = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_beta);
@@ -297,9 +499,10 @@ fn gpu_prove_from_trace<
         let h_lookup_gamma = transcript.get_multiple_challenges_fixed::<2>();
         let h_lookup_gamma = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_lookup_gamma);
         let lookup_beta: DExt = h_lookup_beta.into();
+        let lookup_gamma: DExt = h_lookup_gamma.into();
 
         let lookup_evaluator_id = 0;
-        let _selector_subpath = setup_base
+        let selector_subpath = setup_base
             .selectors_placement
             .output_placement(lookup_evaluator_id)
             .expect("lookup gate must be placed");
@@ -312,17 +515,17 @@ fn gpu_prove_from_trace<
             }
             LookupParameters::TableIdAsConstant { .. }
             | LookupParameters::TableIdAsVariable { .. } => {
-                // let columns_per_subargument = cs.lookup_parameters.columns_per_subargument();
+                let columns_per_subargument = cs.lookup_parameters.columns_per_subargument();
 
-                // let mut h_powers_of_gamma: Vec<EF> = vec![];
-                // let mut current = EF::ONE;
-                // for _ in 0..columns_per_subargument {
-                //     h_powers_of_gamma.push(current.into());
-                //     // Should this be h_gamma or h_lookup_gamma?
-                //     current.mul_assign(&h_lookup_gamma);
-                // }
-                // let mut powers_of_gamma = dvec!(h_powers_of_gamma.len());
-                // powers_of_gamma.copy_from_slice(&h_powers_of_gamma)?;
+                let mut h_powers_of_gamma = vec![];
+                let mut current = EF::ONE;
+                for _ in 0..columns_per_subargument {
+                    h_powers_of_gamma.push(current.into());
+                    // Should this be h_gamma or h_lookup_gamma?
+                    current.mul_assign(&h_lookup_gamma);
+                }
+                let mut powers_of_gamma = dvec!(h_powers_of_gamma.len());
+                powers_of_gamma.copy_from_slice(&h_powers_of_gamma)?;
 
                 // compute_lookup_argument_over_general_purpose_cols(
                 //     &base_trace,
@@ -338,6 +541,7 @@ fn gpu_prove_from_trace<
                 // )?;
 
                 todo!();
+                powers_of_gamma
             }
             a @ LookupParameters::UseSpecializedColumnsWithTableIdAsVariable { width, .. }
             | a @ LookupParameters::UseSpecializedColumnsWithTableIdAsConstant { width, .. } => {
@@ -381,7 +585,6 @@ fn gpu_prove_from_trace<
                     &powers_of_gamma,
                     variables_offset,
                     cs.lookup_parameters,
-                    lde_degree,
                     &mut argument_raw_storage,
                 )?;
 
@@ -393,7 +596,7 @@ fn gpu_prove_from_trace<
     } else {
         (None, None)
     };
-
+    drop(raw_trace);
     let argument_monomial_storage = argument_raw_storage.into_monomial()?;
     let mut argument_holder =
         ArgumentCache::from_monomial(argument_monomial_storage, fri_lde_degree, used_lde_degree)?;
@@ -404,6 +607,7 @@ fn gpu_prove_from_trace<
 
     let h_alpha = transcript.get_multiple_challenges_fixed::<2>();
     let h_alpha = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_alpha);
+    let alpha: DExt = h_alpha.into();
 
     let num_lookup_subarguments = cs.num_sublookup_arguments();
     let num_multiplicities_polys = cs.num_multipicities_polys();
@@ -576,6 +780,7 @@ fn gpu_prove_from_trace<
             &mut quotient_holder,
             h_z.clone(),
             h_z_omega.clone(),
+            fri_lde_degree,
         )?
     };
 
@@ -662,6 +867,7 @@ fn gpu_prove_from_trace<
             &argument_polys,
             &quotient_polys,
             coset_omegas,
+            coset_idx,
             &evaluations_at_z,
             &evaluations_at_z_omega,
             &evaluations_at_zero,
@@ -689,7 +895,7 @@ fn gpu_prove_from_trace<
         new_pow_bits,     // updated POW bits if needed
         num_queries,      // num queries
         folding_schedule, // folding schedule
-        ..,
+        final_expected_degree,
     ) = boojum::cs::implementations::prover::compute_fri_schedule(
         proof_config.security_level as u32,
         cap_size,
@@ -698,20 +904,29 @@ fn gpu_prove_from_trace<
         domain_size.trailing_zeros(),
     );
 
-    let first_code_word = CodeWord::new(
-        deep_quotient.c0.storage.into_inner(),
-        deep_quotient.c1.storage.into_inner(),
-        fri_lde_degree,
-    );
-    let (first_oracle, intermediate_code_words, intermediate_oracles, fri_last_monomials) =
-        compute_fri(
-            first_code_word.clone(),
-            &mut transcript,
-            folding_schedule.clone(),
-            fri_lde_degree,
-            cap_size,
-        )?;
+    let first_codeword = unsafe {
+        // use deep quotient storage as adjacent full storage as usual
+        let (ptr, len, cap, allocator) = deep_quotient
+            .c0
+            .storage
+            .into_inner()
+            .into_raw_parts_with_alloc();
+        debug_assert_eq!(len, fri_lde_degree * domain_size);
+        let storage = DVec::from_raw_parts_in(ptr, 2 * len, 2 * cap, allocator);
+        CodeWord::new_base_assuming_adjacent(storage, fri_lde_degree)
+    };
+    dbg!(first_codeword.length());
 
+    let (mut fri_holder, final_fri_monomials) = compute_fri::<_, A>(
+        first_codeword,
+        &mut transcript,
+        folding_schedule.clone(),
+        fri_lde_degree,
+        cap_size,
+        worker,
+    )?;
+    assert_eq!(final_fri_monomials[0].len(), final_expected_degree);
+    assert_eq!(final_fri_monomials[1].len(), final_expected_degree);
     let pow_challenge = if new_pow_bits != 0 {
         println!("Doing PoW");
 
@@ -738,17 +953,6 @@ fn gpu_prove_from_trace<
         0
     };
 
-    let _fri_intermediate_query_storage: Vec<_> = intermediate_code_words
-        .iter()
-        .zip(intermediate_oracles.iter())
-        .map(|(c, o)| (c.clone(), o.clone()))
-        .collect();
-    // TODO: setup oracle is precomputed, we don't need to recompute it
-    // transfer host based oracle to the device then Robert's function will use it
-    let (setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
-    debug_assert_eq!(setup_tree_cap, vk.setup_merkle_tree_cap);
-    tree_holder.set_setup_subtrees(setup_subtrees);
-
     use boojum::cs::implementations::transcript::BoolsBuffer;
     let max_needed_bits = (domain_size * fri_lde_degree).trailing_zeros() as usize;
     // let mut bools_buffer = BoolsBuffer::new(max_needed_bits);
@@ -761,126 +965,609 @@ fn gpu_prove_from_trace<
 
     // get query schedule first, sort then reduce number of coset evals
     let mut query_details_for_cosets = vec![vec![]; fri_lde_degree];
-
+    let mut query_idx_and_coset_idx_map = vec![0usize; num_queries];
     for query_idx in 0..num_queries {
         let query_index_lsb_first_bits = bools_buffer.get_bits(&mut transcript, max_needed_bits);
         // we consider it to be some convenient for us encoding of coset + inner index.
 
         let inner_idx =
             u64_from_lsb_first_bits(&query_index_lsb_first_bits[0..num_bits_for_in_coset_index])
-                as usize;
+                as u32;
         let coset_idx =
             u64_from_lsb_first_bits(&query_index_lsb_first_bits[num_bits_for_in_coset_index..])
                 as usize;
-        query_details_for_cosets[coset_idx].push((query_idx, coset_idx, inner_idx));
+        assert!(inner_idx < u32::MAX);
+        query_details_for_cosets[coset_idx].push(inner_idx);
+        query_idx_and_coset_idx_map[query_idx] = coset_idx;
     }
 
-    let mut fri_layers = vec![];
-    fri_layers.push((&first_code_word, &first_oracle));
-    for l in intermediate_code_words
+    let mut d_query_details = vec![];
+    for queries_for_coset in query_details_for_cosets.iter().cloned() {
+        let mut d_queries_for_coset = svec!(queries_for_coset.len());
+        mem::h2d(&queries_for_coset, &mut d_queries_for_coset)?;
+        d_query_details.push(d_queries_for_coset);
+    }
+
+    //our typical FRI schedule is  [3,3,3,3,3,2]
+    let effective_query_indexes =
+        compute_effective_indexes_for_fri_layers(&fri_holder, &query_details_for_cosets)?;
+
+    let public_inputs: Vec<_> = public_inputs_with_locations
         .iter()
-        .zip(intermediate_oracles.iter())
-    {
-        fri_layers.push(l)
+        .cloned()
+        .map(|i| i.2)
+        .collect();
+
+    let mut gpu_proof = GpuProof::<A>::allocate(
+        trace_layout.num_polys(),
+        setup_holder.num_polys(),
+        // num polys is double here because argument and quotient polys have their elements in the extension field
+        argument_holder.num_polys_in_base(),
+        quotient_holder.num_polys_in_base(),
+        domain_size,
+        proof_config,
+        cs.lookup_parameters.clone(),
+        num_queries,
+        query_details_for_cosets.clone(),
+        query_idx_and_coset_idx_map,
+        folding_schedule.clone(),
+        public_inputs.clone(),
+        pow_challenge,
+        h_evaluations_at_z.clone(),
+        h_evaluations_at_z_omega.clone(),
+        h_evaluations_at_zero.clone(),
+    );
+
+    // TODO: consider to do setup query on the host
+    let (setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
+    assert_eq!(setup_base.setup_tree.get_cap(), setup_tree_cap);
+    tree_holder.setup_setup_subtrees(setup_subtrees);
+    // tree_holder.set_setup_tree_from_host_data(&setup_base.setup_tree);
+
+    for (coset_idx, indexes_for_coset) in d_query_details.iter().enumerate() {
+        let num_queries_for_coset = indexes_for_coset.len();
+        trace_holder.batch_query_for_coset::<H, A>(
+            coset_idx,
+            indexes_for_coset,
+            num_queries_for_coset,
+            domain_size,
+            &mut gpu_proof.witness_all_leaf_elems[coset_idx],
+            &mut gpu_proof.witness_all_proofs[coset_idx],
+            &tree_holder,
+        )?;
+
+        argument_holder.batch_query_for_coset::<H, A>(
+            coset_idx,
+            &indexes_for_coset,
+            num_queries_for_coset,
+            domain_size,
+            &mut gpu_proof.stage_2_all_leaf_elems[coset_idx],
+            &mut gpu_proof.stage_2_all_proofs[coset_idx],
+            &tree_holder,
+        )?;
+
+        quotient_holder.batch_query_for_coset::<H, A>(
+            coset_idx,
+            &indexes_for_coset,
+            num_queries_for_coset,
+            domain_size,
+            &mut gpu_proof.quotient_all_leaf_elems[coset_idx],
+            &mut gpu_proof.quotient_all_proofs[coset_idx],
+            &tree_holder,
+        )?;
+
+        setup_holder.batch_query::<H, A>(
+            coset_idx,
+            &indexes_for_coset,
+            num_queries_for_coset,
+            domain_size,
+            &mut gpu_proof.setup_all_leaf_elems[coset_idx],
+            &mut gpu_proof.setup_all_proofs[coset_idx],
+            &tree_holder,
+        )?;
     }
-
-    let mut round_queries = vec![];
-    for (coset_idx, rounds_for_coset) in query_details_for_cosets.iter().cloned().enumerate() {
-        for (query_idx, actual_coset_idx, row_idx) in rounds_for_coset.iter().cloned() {
-            assert_eq!(coset_idx, actual_coset_idx);
-            // In theory queries should happen through tree holder
-            // but it is okey to construct queries through polynomial storages
-            // due to too many lifetime definitions
-            let witness_query = trace_holder.query(
-                coset_idx,
-                fri_lde_degree,
-                row_idx,
-                domain_size,
-                &tree_holder,
-            )?;
-            let setup_query = setup_holder.query(
-                coset_idx,
-                fri_lde_degree,
-                row_idx,
-                domain_size,
-                &tree_holder,
-            )?;
-            let argument_query = argument_holder.query(
-                coset_idx,
-                fri_lde_degree,
-                row_idx,
-                domain_size,
-                &tree_holder,
-            )?;
-            let quotient_query = quotient_holder.query(
-                coset_idx,
-                fri_lde_degree,
-                row_idx,
-                domain_size,
-                &tree_holder,
-            )?;
-
-            let mut fri_queries = vec![];
-            let mut row_idx = row_idx;
-            let mut domain_size = domain_size;
-            for ((code_word, fri_oracle), schedule) in
-                fri_layers.iter().cloned().zip(folding_schedule.iter())
-            {
-                let fri_round_query = fri_oracle.query::<H, _>(
-                    code_word,
-                    coset_idx,
-                    fri_lde_degree,
-                    row_idx,
-                    domain_size,
+    // FIXME: query FRI oracles
+    let mut domain_size_for_fri_layers = fri_lde_degree * domain_size;
+    for (layer_idx, schedule) in folding_schedule.iter().enumerate() {
+        for coset_idx in 0..fri_lde_degree {
+            if layer_idx == 0 {
+                fri_holder.base_oracle_batch_query::<H, A>(
+                    layer_idx,
+                    &effective_query_indexes[0][coset_idx],
+                    effective_query_indexes[0][coset_idx].len(),
+                    domain_size_for_fri_layers,
+                    &mut gpu_proof.fri_base_oracle_leaf_elems[coset_idx],
+                    &mut gpu_proof.fri_base_oracle_proofs[coset_idx],
                 )?;
-
-                fri_queries.push(fri_round_query);
-
-                row_idx >>= schedule;
-                domain_size >>= schedule;
+            } else {
+                fri_holder.intermediate_oracle_batch_query::<H, A>(
+                    layer_idx,
+                    &effective_query_indexes[layer_idx][coset_idx],
+                    effective_query_indexes[layer_idx][coset_idx].len(),
+                    domain_size_for_fri_layers,
+                    &mut gpu_proof.fri_intermediate_oracles_leaf_elems[layer_idx - 1][coset_idx],
+                    &mut gpu_proof.fri_intermediate_oracles_proofs[layer_idx - 1][coset_idx],
+                )?;
             }
-
-            let round_query = SingleRoundQueries {
-                witness_query,
-                setup_query,
-                stage_2_query: argument_query,
-                quotient_query,
-                fri_queries,
-            };
-            round_queries.push((query_idx, round_query))
         }
+        domain_size_for_fri_layers >>= schedule;
     }
 
-    round_queries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let queries_per_fri_repetition: Vec<_> = round_queries.into_iter().map(|r| r.1).collect();
     synchronize_streams()?;
     println!("FRI Queries are done {:?}", time.elapsed());
-    let public_inputs_only_values = public_inputs_with_locations
-        .into_iter()
-        .map(|(_, _, value)| value)
-        .collect();
-    let proof = Proof::<F, H, EXT> {
-        public_inputs: public_inputs_only_values,
-        witness_oracle_cap: trace_tree_cap.clone(),
-        stage_2_oracle_cap: argument_tree_cap.clone(),
-        quotient_oracle_cap: quotient_tree_cap.clone(),
-        final_fri_monomials: fri_last_monomials.clone(),
-        values_at_z: h_evaluations_at_z.clone(),
-        values_at_z_omega: h_evaluations_at_z_omega.clone(),
-        values_at_0: h_evaluations_at_zero.clone(),
-        pow_challenge,
-        fri_base_oracle_cap: first_oracle.get_tree_cap()?,
-        fri_intermediate_oracles_caps: intermediate_oracles
-            .iter()
-            .map(|el| el.get_tree_cap().expect(""))
-            .collect(),
-        queries_per_fri_repetition,
 
-        _marker: std::marker::PhantomData,
-        proof_config,
+    gpu_proof.public_inputs = public_inputs;
+    gpu_proof.witness_oracle_cap = trace_tree_cap;
+    gpu_proof.stage_2_oracle_cap = argument_tree_cap;
+    gpu_proof.quotient_oracle_cap = quotient_tree_cap;
+    gpu_proof.setup_oracle_cap = setup_base.setup_tree.get_cap();
+    gpu_proof.fri_base_oracle_cap = fri_holder.base_oracle.get_tree_cap()?;
+    gpu_proof.fri_intermediate_oracles_caps = fri_holder
+        .intermediate_oracles
+        .into_iter()
+        .map(|o| o.get_tree_cap().expect("fri oracle cap"))
+        .collect();
+    gpu_proof.final_fri_monomials = final_fri_monomials;
+
+    Ok((gpu_proof))
+}
+
+pub struct GpuProof<A: GoodAllocator> {
+    proof_config: ProofConfig,
+    public_inputs: Vec<F>,
+    pow_challenge: u64,
+    domain_size: usize,
+    num_trace_polys: usize,
+    num_setup_polys: usize,
+    num_arguments_polys: usize,
+    num_quotient_polys: usize,
+
+    query_details: Vec<Vec<u32>>,
+    query_map: Vec<usize>,
+    witness_oracle_cap: Vec<[F; 4]>,
+    // only inner vectors needs to be located in the pinned memory
+    witness_all_leaf_elems: Vec<Vec<F, A>>,
+    witness_all_proofs: Vec<Vec<F, A>>,
+
+    stage_2_oracle_cap: Vec<[F; 4]>,
+    stage_2_all_leaf_elems: Vec<Vec<F, A>>,
+    stage_2_all_proofs: Vec<Vec<F, A>>,
+
+    quotient_oracle_cap: Vec<[F; 4]>,
+    quotient_all_leaf_elems: Vec<Vec<F, A>>,
+    quotient_all_proofs: Vec<Vec<F, A>>,
+
+    setup_oracle_cap: Vec<[F; 4]>,
+    setup_all_leaf_elems: Vec<Vec<F, A>>,
+    setup_all_proofs: Vec<Vec<F, A>>,
+
+    fri_base_oracle_cap: Vec<[F; 4]>,
+    fri_base_oracle_leaf_elems: Vec<Vec<F, A>>,
+    fri_base_oracle_proofs: Vec<Vec<F, A>>,
+
+    fri_intermediate_oracles_caps: Vec<Vec<[F; 4]>>,
+    fri_intermediate_oracles_leaf_elems: Vec<Vec<Vec<F, A>>>,
+    fri_intermediate_oracles_proofs: Vec<Vec<Vec<F, A>>>,
+    fri_folding_schedule: Vec<usize>,
+    // last monomials doesn't need to be allocated on the pinned memory
+    // since intermediate transfer uses pinned then global allocator.
+    final_fri_monomials: [Vec<F>; 2],
+
+    values_at_z: Vec<EF, A>,
+    values_at_z_omega: Vec<EF, A>,
+    values_at_z_zero: Vec<EF, A>,
+}
+
+impl<A: GoodAllocator> GpuProof<A> {
+    pub fn allocate(
+        num_trace_polys: usize,
+        num_setup_polys: usize,
+        num_arguments_polys: usize,
+        num_quotient_polys: usize,
+        domain_size: usize,
+        proof_config: ProofConfig,
+        lookup_params: LookupParameters,
+        num_queries: usize,
+        query_details: Vec<Vec<u32>>,
+        query_map: Vec<usize>,
+        folding_schedule: Vec<usize>,
+        public_inputs: Vec<F>,
+        pow_challenge: u64,
+        values_at_z: Vec<EF, A>,
+        values_at_z_omega: Vec<EF, A>,
+        values_at_z_zero: Vec<EF, A>,
+    ) -> Self {
+        let ProofConfig {
+            fri_lde_factor,
+            merkle_tree_cap_size,
+            fri_folding_schedule,
+            security_level,
+            pow_bits,
+        } = proof_config.clone();
+
+        assert!(
+            fri_folding_schedule.is_none(),
+            "we do not yet support externally provided FRI schedule"
+        );
+
+        assert!(domain_size.is_power_of_two());
+        assert!(values_at_z.len() > 0);
+        assert!(values_at_z_omega.len() > 0);
+        assert_eq!(query_details.len(), fri_lde_factor);
+        if lookup_params.lookup_is_allowed() {
+            assert!(values_at_z_zero.len() > 0);
+        }
+
+        assert_eq!(
+            num_queries,
+            query_details.iter().map(|coset| coset.len()).sum()
+        );
+        let typical_capacity_for_merkle_caps = merkle_tree_cap_size;
+        // it is guaranteed that number of leaf elems is the largest in the witness tree than other trees
+        let typical_capacity_for_leaf = num_queries * num_trace_polys;
+        let typical_capacity_for_proof =
+            num_queries * NUM_EL_PER_HASH * domain_size.trailing_zeros() as usize;
+        let num_fri_layers = folding_schedule.len();
+        let mut proof = GpuProof {
+            proof_config,
+            public_inputs,
+            pow_challenge,
+            domain_size,
+            num_trace_polys,
+            num_setup_polys,
+            num_arguments_polys,
+            num_quotient_polys,
+            query_details,
+            query_map,
+            witness_oracle_cap: Vec::with_capacity(typical_capacity_for_merkle_caps),
+            stage_2_oracle_cap: Vec::with_capacity(typical_capacity_for_merkle_caps),
+            quotient_oracle_cap: Vec::with_capacity(typical_capacity_for_merkle_caps),
+            setup_oracle_cap: Vec::with_capacity(typical_capacity_for_merkle_caps),
+            fri_base_oracle_cap: Vec::with_capacity(typical_capacity_for_merkle_caps),
+            fri_intermediate_oracles_caps: vec![
+                Vec::with_capacity(typical_capacity_for_merkle_caps);
+                num_fri_layers
+            ],
+            witness_all_leaf_elems: vec![],
+            witness_all_proofs: vec![],
+            stage_2_all_leaf_elems: vec![],
+            stage_2_all_proofs: vec![],
+            quotient_all_leaf_elems: vec![],
+            quotient_all_proofs: vec![],
+            setup_all_leaf_elems: vec![],
+            setup_all_proofs: vec![],
+            fri_base_oracle_leaf_elems: vec![],
+            fri_base_oracle_proofs: vec![],
+            fri_intermediate_oracles_leaf_elems: vec![],
+            fri_intermediate_oracles_proofs: vec![],
+            fri_folding_schedule: folding_schedule.clone(),
+            values_at_z,
+            values_at_z_omega,
+            values_at_z_zero,
+            final_fri_monomials: [vec![], vec![]],
+        };
+        proof
+            .fri_intermediate_oracles_leaf_elems
+            .resize(folding_schedule.len(), vec![]);
+        proof
+            .fri_intermediate_oracles_proofs
+            .resize(folding_schedule.len(), vec![]);
+
+        for _ in 0..fri_lde_factor {
+            proof.witness_all_leaf_elems.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.witness_all_proofs.push(Vec::with_capacity_in(
+                typical_capacity_for_proof,
+                A::default(),
+            ));
+            proof.stage_2_all_leaf_elems.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.stage_2_all_proofs.push(Vec::with_capacity_in(
+                typical_capacity_for_proof,
+                A::default(),
+            ));
+            proof.quotient_all_leaf_elems.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.quotient_all_proofs.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.setup_all_leaf_elems.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.setup_all_proofs.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.fri_base_oracle_leaf_elems.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            proof.fri_base_oracle_proofs.push(Vec::with_capacity_in(
+                typical_capacity_for_leaf,
+                A::default(),
+            ));
+            for (layer_idx, _) in folding_schedule.iter().enumerate() {
+                proof.fri_intermediate_oracles_leaf_elems[layer_idx].push(Vec::with_capacity_in(
+                    typical_capacity_for_leaf,
+                    A::default(),
+                ));
+                proof.fri_intermediate_oracles_proofs[layer_idx].push(Vec::with_capacity_in(
+                    typical_capacity_for_leaf,
+                    A::default(),
+                ));
+            }
+        }
+
+        proof
+    }
+}
+
+impl<A: GoodAllocator> Into<Proof<F, DefaultTreeHasher, EXT>> for GpuProof<A> {
+    fn into(self) -> Proof<F, DefaultTreeHasher, EXT> {
+        let GpuProof {
+            proof_config,
+            public_inputs,
+            pow_challenge,
+            query_details,
+            query_map,
+            num_trace_polys,
+            num_setup_polys,
+            num_arguments_polys,
+            num_quotient_polys,
+            witness_oracle_cap,
+            witness_all_leaf_elems,
+            witness_all_proofs,
+            stage_2_oracle_cap,
+            stage_2_all_leaf_elems,
+            stage_2_all_proofs,
+            quotient_oracle_cap,
+            quotient_all_leaf_elems,
+            quotient_all_proofs,
+            setup_oracle_cap,
+            setup_all_leaf_elems,
+            setup_all_proofs,
+            fri_base_oracle_cap,
+            fri_base_oracle_leaf_elems,
+            fri_base_oracle_proofs,
+            fri_intermediate_oracles_caps,
+            fri_intermediate_oracles_leaf_elems,
+            fri_intermediate_oracles_proofs,
+            fri_folding_schedule,
+            values_at_z,
+            values_at_z_omega,
+            values_at_z_zero,
+            final_fri_monomials,
+            domain_size,
+        } = self;
+        let mut num_queries = vec![];
+        for indexes in query_details.iter() {
+            num_queries.push(indexes.len());
+        }
+        let mut offsets_for_query_in_coset = vec![0; proof_config.fri_lde_factor];
+        let mut queries_per_fri_repetition = vec![];
+        let coset_cap_size = coset_cap_size(
+            proof_config.merkle_tree_cap_size,
+            proof_config.fri_lde_factor,
+        );
+        assert!(coset_cap_size.is_power_of_two());
+
+        for coset_idx in query_map.into_iter() {
+            assert!(coset_idx < proof_config.fri_lde_factor);
+            let num_queries_in_coset = num_queries[coset_idx];
+            let query_idx_in_coset = offsets_for_query_in_coset[coset_idx];
+            // witnesses
+            let witness_query = construct_single_query_from_flattened_batch_sources(
+                &witness_all_leaf_elems[coset_idx],
+                &witness_all_proofs[coset_idx],
+                coset_cap_size,
+                num_queries_in_coset,
+                query_idx_in_coset,
+                num_trace_polys,
+                1,
+                domain_size,
+            );
+
+            // arguments
+            let stage_2_query = construct_single_query_from_flattened_batch_sources(
+                &stage_2_all_leaf_elems[coset_idx],
+                &stage_2_all_proofs[coset_idx],
+                coset_cap_size,
+                num_queries_in_coset,
+                query_idx_in_coset,
+                num_arguments_polys,
+                1,
+                domain_size,
+            );
+
+            // quotient
+            let quotient_query = construct_single_query_from_flattened_batch_sources(
+                &quotient_all_leaf_elems[coset_idx],
+                &quotient_all_proofs[coset_idx],
+                coset_cap_size,
+                num_queries_in_coset,
+                query_idx_in_coset,
+                num_quotient_polys,
+                1,
+                domain_size,
+            );
+
+            // setup
+            let setup_query = construct_single_query_from_flattened_batch_sources(
+                &setup_all_leaf_elems[coset_idx],
+                &setup_all_proofs[coset_idx],
+                coset_cap_size,
+                num_queries_in_coset,
+                query_idx_in_coset,
+                num_setup_polys,
+                1,
+                domain_size,
+            );
+
+            // fri
+            let mut domain_size_for_fri = proof_config.fri_lde_factor * domain_size;
+            let mut fri_queries = vec![];
+            for (layer_idx, schedule) in fri_folding_schedule.iter().enumerate() {
+                let num_els_per_leaf = 1 << schedule;
+                let fri_query = if layer_idx == 0 {
+                    construct_single_query_from_flattened_batch_sources(
+                        &fri_base_oracle_leaf_elems[coset_idx],
+                        &fri_base_oracle_proofs[coset_idx],
+                        proof_config.merkle_tree_cap_size,
+                        num_queries_in_coset,
+                        query_idx_in_coset,
+                        2,
+                        num_els_per_leaf,
+                        domain_size_for_fri,
+                    )
+                } else {
+                    let layer_idx = layer_idx - 1;
+                    construct_single_query_from_flattened_batch_sources(
+                        &fri_intermediate_oracles_leaf_elems[layer_idx][coset_idx],
+                        &fri_intermediate_oracles_proofs[layer_idx][coset_idx],
+                        proof_config.merkle_tree_cap_size,
+                        num_queries_in_coset,
+                        query_idx_in_coset,
+                        2,
+                        num_els_per_leaf,
+                        domain_size_for_fri,
+                    )
+                };
+                fri_queries.push(fri_query);
+                domain_size_for_fri >>= schedule
+            }
+            assert_eq!(fri_queries.len(), fri_folding_schedule.len());
+
+            let round_queries = SingleRoundQueries {
+                witness_query,
+                stage_2_query,
+                quotient_query,
+                setup_query,
+                fri_queries,
+            };
+
+            queries_per_fri_repetition.push(round_queries);
+            offsets_for_query_in_coset[coset_idx] += 1;
+        }
+
+        let proof = Proof::<F, DefaultTreeHasher, EXT> {
+            public_inputs: public_inputs.clone(),
+            witness_oracle_cap: witness_oracle_cap,
+            stage_2_oracle_cap: stage_2_oracle_cap,
+            quotient_oracle_cap: quotient_oracle_cap,
+            final_fri_monomials,
+            values_at_z: values_at_z.to_vec(),
+            values_at_z_omega: values_at_z_omega.to_vec(),
+            values_at_0: values_at_z_zero.to_vec(),
+            pow_challenge,
+            fri_base_oracle_cap: fri_base_oracle_cap,
+            fri_intermediate_oracles_caps,
+            queries_per_fri_repetition,
+
+            _marker: std::marker::PhantomData,
+            proof_config,
+        };
+
+        proof
+    }
+}
+
+fn construct_single_query_from_flattened_batch_sources(
+    leaf_elems: &[F],
+    proof_elems: &[F],
+    cap_size: usize,
+    num_queries: usize,
+    query_idx_in_coset: usize,
+    num_cols: usize,
+    num_elems_per_leaf: usize,
+    domain_size: usize,
+) -> OracleQuery<F, DefaultTreeHasher> {
+    let leaf_elements = construct_single_query_for_leaf_source_from_batch_sources(
+        leaf_elems,
+        num_queries,
+        query_idx_in_coset,
+        num_cols,
+        num_elems_per_leaf,
+    );
+
+    let proof = construct_single_query_for_merkle_path_from_batch_sources(
+        proof_elems,
+        cap_size,
+        num_queries,
+        query_idx_in_coset,
+        num_elems_per_leaf,
+        domain_size,
+    );
+
+    let mut query: OracleQuery<F, DefaultTreeHasher> = OracleQuery {
+        leaf_elements,
+        proof,
     };
-    Ok(proof)
+
+    query
+}
+
+pub(crate) fn construct_single_query_for_leaf_source_from_batch_sources(
+    leaf_elems: &[F],
+    num_queries: usize,
+    query_idx: usize,
+    num_cols: usize,
+    num_elems_per_leaf: usize,
+) -> Vec<F> {
+    assert!(!leaf_elems.is_empty());
+    assert_eq!(leaf_elems.len() % (num_queries * num_elems_per_leaf), 0);
+    let chunk_size = num_elems_per_leaf * num_queries;
+    let leaf_chunks = leaf_elems.chunks(chunk_size);
+    assert_eq!(leaf_chunks.len(), num_cols);
+
+    let mut result = Vec::with_capacity(num_elems_per_leaf * num_cols);
+    for chunk in leaf_chunks {
+        assert_eq!(chunk.len(), chunk_size);
+        let start = query_idx * num_elems_per_leaf;
+        let end = start + num_elems_per_leaf;
+        assert!(end <= chunk_size);
+        result.extend_from_slice(&chunk[start..end]);
+    }
+    assert_eq!(result.len(), result.capacity());
+    result
+}
+
+pub(crate) fn construct_single_query_for_merkle_path_from_batch_sources(
+    proof_elems: &[F],
+    cap_size: usize,
+    num_queries: usize,
+    query_idx: usize,
+    num_elems_per_leaf: usize,
+    domain_size: usize,
+) -> Vec<[F; 4]> {
+    assert_eq!(proof_elems.len() % num_queries * NUM_EL_PER_HASH, 0);
+    assert!(domain_size.is_power_of_two());
+    assert!(num_elems_per_leaf.is_power_of_two());
+    let num_leafs = domain_size / num_elems_per_leaf;
+    let num_layers = (num_leafs.trailing_zeros() - cap_size.trailing_zeros()) as usize;
+    assert_eq!(
+        proof_elems.len(),
+        num_queries * num_layers * NUM_EL_PER_HASH
+    );
+    let mut result = Vec::with_capacity(num_layers);
+    for layer in proof_elems.chunks(num_queries * NUM_EL_PER_HASH) {
+        let mut tmp = [F::ZERO; NUM_EL_PER_HASH];
+        for col_idx in 0..NUM_EL_PER_HASH {
+            let idx = col_idx * num_queries + query_idx;
+            tmp[col_idx] = layer[idx];
+        }
+        result.push(tmp);
+    }
+    assert_eq!(result.len(), result.capacity());
+
+    result
 }
 
 pub(crate) fn u64_from_lsb_first_bits(bits: &[bool]) -> u64 {
@@ -892,14 +1579,15 @@ pub(crate) fn u64_from_lsb_first_bits(bits: &[bool]) -> u64 {
     result
 }
 
-pub fn compute_evaluations_over_lagrange_basis<'a>(
+pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
     trace_holder: &mut TraceCache,
     setup_holder: &mut SetupCache,
     argument_holder: &mut ArgumentCache<'a>,
     quotient_holder: &mut QuotientCache<'a>,
     z: EF,
     z_omega: EF,
-) -> CudaResult<(Vec<EF>, Vec<EF>, Vec<EF>)> {
+    lde_degree: usize,
+) -> CudaResult<(Vec<EF, A>, Vec<EF, A>, Vec<EF, A>)> {
     // all polynomials should be opened at "z"
     // additionally, copy permutation polynomial should be opened at "z*w"
     // lookup polynomials should be opened at "0"
@@ -909,8 +1597,8 @@ pub fn compute_evaluations_over_lagrange_basis<'a>(
     let domain_size = trace_storage.domain_size();
     let precomputed_bases_for_z = PrecomputedBasisForBarycentric::precompute(domain_size, z)?;
 
-    let trace_evals_at_z = trace_storage.barycentric_evaluate(&precomputed_bases_for_z)?;
-    let setup_evals_at_z = setup_storage.barycentric_evaluate(&precomputed_bases_for_z)?;
+    let trace_evals_at_z = trace_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?;
+    let setup_evals_at_z = setup_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?;
 
     let quotient_storage = quotient_holder.get_or_compute_coset_evals(0)?;
     let quotient_evals_at_z = quotient_storage.barycentric_evaluate(&precomputed_bases_for_z)?;
@@ -969,6 +1657,7 @@ pub fn compute_evaluations_over_lagrange_basis<'a>(
         num_permutation_cols + num_constant_cols + num_table_cols
     );
     let num_partial_product_poyls = partial_products.len();
+    let num_lookup_polys = lookup_a_polys.len() + lookup_b_polys.len();
     assert_eq!(argument_evals_at_z.len(), argument_holder.num_polys());
     // decompose storage into sub polynomials
     let mut trace_evals_at_z_iter = trace_evals_at_z;
@@ -988,10 +1677,17 @@ pub fn compute_evaluations_over_lagrange_basis<'a>(
 
     let (copy_permutation_evals_at_z, lookup_evals_at_z) =
         argument_evals_at_z.split_at(1 + num_partial_product_poyls);
-
-    let mut polynomials_at_z = vec![];
-    let mut polynomials_at_z_omega = vec![];
-    let mut polynomials_at_zero = vec![];
+    let num_trace_polys = trace_holder.num_polys();
+    let num_setup_polys = setup_holder.num_polys();
+    let num_argument_polys = argument_holder.num_polys();
+    let num_quotient_polys = quotient_holder.num_polys();
+    let num_all_polys_at_z = trace_holder.num_polys()
+        + setup_holder.num_polys()
+        + argument_holder.num_polys()
+        + quotient_holder.num_polys();
+    let mut polynomials_at_z = Vec::with_capacity_in(num_all_polys_at_z, A::default());
+    let mut polynomials_at_z_omega = Vec::with_capacity_in(1, A::default());
+    let mut polynomials_at_zero = Vec::with_capacity_in(argument_holder.num_polys(), A::default());
 
     polynomials_at_z.extend_from_slice(&variable_evals_at_z);
     polynomials_at_z.extend_from_slice(&witness_evals_at_z);
@@ -1060,6 +1756,7 @@ fn compute_deep_quotiening_over_coset(
     argument_polys: &ArgumentPolynomials<CosetEvaluations>,
     quotient_poly_constraints: &GenericComplexPolynomialStorage<CosetEvaluations>,
     roots: Poly<CosetEvaluations>,
+    coset_idx: usize,
     evaluations_at_z: &DVec<EF>,
     evaluations_at_z_omega: &DVec<EF>,
     evaluations_at_zero: &Option<DVec<EF>>,
@@ -1104,7 +1801,7 @@ fn compute_deep_quotiening_over_coset(
 
     let num_public_inputs: usize = public_input_opening_tuples
         .iter()
-        .map(|(_open_at, set)| set.len())
+        .map(|(open_at, set)| set.len())
         .sum();
 
     deep_quotient_except_public_inputs(
@@ -1152,7 +1849,7 @@ fn compute_deep_quotiening_over_coset(
         denom_at_point_ext
             .c0
             .storage
-            .copy_from_device_slice(&denom_at_point.storage.as_ref())?;
+            .copy_from_device_slice(&denom_at_point.storage.as_ref());
         quotient_for_row.mul_assign(&denom_at_point_ext)?;
         quotient.add_assign(&quotient_for_row)?;
     }

@@ -333,6 +333,44 @@ pub fn fold(
     Ok(())
 }
 
+pub fn fold_flattened(src: &[F], dst: &mut [F], coset_inv: F, challenge: &DExt) -> CudaResult<()> {
+    let domain_size = src.len();
+    let fold_size = domain_size >> 1;
+    assert!(domain_size.is_power_of_two());
+    assert!(fold_size.is_power_of_two());
+    assert_eq!(dst.len(), fold_size);
+
+    let values = unsafe {
+        let values = DeviceSlice::from_slice(&src[..]);
+        values.transmute::<VectorizedExtensionField>()
+    };
+
+    // TODO
+    let mut d_challenge: SVec<EF> = svec!(1);
+    let d_challenge = unsafe {
+        mem::d2d(
+            &challenge.c0.inner[..],
+            &mut d_challenge.data[0].coeffs[..1],
+        )?;
+        mem::d2d(
+            &challenge.c1.inner[..],
+            &mut d_challenge.data[0].coeffs[1..],
+        )?;
+        DeviceVariable::from_ref(&d_challenge[0])
+    };
+
+    let mut result: DVec<F> = dvec!(2 * fold_size);
+    let result_ref = unsafe {
+        let result = DeviceSlice::from_mut_slice(dst);
+        result.transmute_mut()
+    };
+
+    boojum_cuda::ops_complex::fold(coset_inv, &d_challenge[0], values, result_ref, get_stream())?;
+
+    Ok(())
+}
+
+
 pub fn distribute_powers(values: &mut [F], base: &DF) -> CudaResult<()> {
     assert!(values.len().is_power_of_two());
     let powers = compute_powers(base, values.len())?;
@@ -366,7 +404,7 @@ pub fn compute_powers_ext(base: &DExt, size: usize) -> CudaResult<[DVec<F>; 2]> 
 }
 
 #[allow(dead_code)]
-pub fn dext_as_dvec(input: &DExt) -> CudaResult<DVec<EF, SmallVirtualMemoryManager>> {
+pub fn dext_as_dvec(input: &DExt) -> CudaResult<DVec<EF, SmallStaticDeviceAllocator>> {
     let mut out: DVec<EF, _> = svec!(1);
     mem::d2d(&input.c0.inner[..], &mut out.data[0].coeffs[..1])?;
     mem::d2d(&input.c1.inner[..], &mut out.data[0].coeffs[1..])?;
@@ -411,14 +449,14 @@ pub fn precompute_barycentric_bases(
     Ok(())
 }
 
-pub fn barycentric_evaluate_base_at_ext(
+pub fn barycentric_evaluate_base_at_ext<A: GoodAllocator>(
     values: &[F],
     bases: &[F],
     domain_size: usize,
     num_polys: usize,
-) -> CudaResult<Vec<EF>> {
+) -> CudaResult<Vec<EF, A>> {
     assert_eq!(values.len(), num_polys * domain_size);
-    barycentric_evaluate::<boojum_cuda::barycentric::EvalBaseAtExt>(
+    barycentric_evaluate::<boojum_cuda::barycentric::EvalBaseAtExt, A>(
         values,
         bases,
         domain_size,
@@ -426,17 +464,17 @@ pub fn barycentric_evaluate_base_at_ext(
     )
 }
 
-pub fn barycentric_evaluate_ext_at_ext(
+pub fn barycentric_evaluate_ext_at_ext<A: GoodAllocator>(
     values: &[F],
     bases: &[F],
     domain_size: usize,
     num_polys: usize,
-) -> CudaResult<Vec<EF>> {
+) -> CudaResult<Vec<EF, A>> {
     assert_eq!(values.len(), 2 * num_polys * domain_size);
     let h_values = unsafe {
         std::slice::from_raw_parts_mut(values.as_ptr() as *mut _, num_polys * domain_size)
     };
-    barycentric_evaluate::<boojum_cuda::barycentric::EvalExtAtExt>(
+    barycentric_evaluate::<boojum_cuda::barycentric::EvalExtAtExt, _>(
         h_values,
         bases,
         domain_size,
@@ -444,12 +482,12 @@ pub fn barycentric_evaluate_ext_at_ext(
     )
 }
 
-fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl>(
+fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl, A: GoodAllocator>(
     values: &[E::YsVec],
     bases: &[F],
     domain_size: usize,
     num_polys: usize,
-) -> CudaResult<Vec<E::X>> {
+) -> CudaResult<Vec<E::X, A>> {
     assert_eq!(values.len(), num_polys * domain_size);
     assert_eq!(bases.len(), 2 * domain_size);
     assert!(domain_size.is_power_of_two());
@@ -468,7 +506,7 @@ fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl>(
     let (partial_reduce_temp_elems, final_cub_reduce_temp_bytes) =
         boojum_cuda::barycentric::get_batch_eval_temp_storage_sizes::<E>(&values_matrix).unwrap();
 
-    let temp_storage_partial_reduce: DVec<EF, VirtualMemoryManager> =
+    let mut temp_storage_partial_reduce: DVec<EF, StaticDeviceAllocator> =
         dvec!(partial_reduce_temp_elems);
 
     let mut temp_storage_partial_reduce = unsafe {
@@ -499,7 +537,7 @@ fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl>(
         get_stream(),
     )?;
 
-    let result = evals.to_vec()?;
+    let result = evals.to_vec_in(A::default())?;
 
     Ok(result)
 }

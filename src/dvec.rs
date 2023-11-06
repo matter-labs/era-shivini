@@ -6,22 +6,20 @@ use std::{
 
 use boojum::field::U64RawRepresentable;
 
-use crate::virtual_allocator::VirtualAllocator;
-
 use super::*;
 
 #[derive(Debug)]
-pub struct DVec<T, A: VirtualAllocator = VirtualMemoryManager> {
+pub struct DVec<T, A: StaticAllocator = StaticDeviceAllocator> {
     pub(crate) data: Vec<T, A>,
 }
 
-impl<T, A: VirtualAllocator> Default for DVec<T, A> {
+impl<T, A: StaticAllocator> Default for DVec<T, A> {
     fn default() -> Self {
         todo!()
     }
 }
 
-impl<T> Clone for DVec<T, VirtualMemoryManager> {
+impl<T> Clone for DVec<T, StaticDeviceAllocator> {
     fn clone(&self) -> Self {
         let mut new = dvec!(self.len());
         new.copy_from_device_slice(&self).unwrap();
@@ -30,7 +28,7 @@ impl<T> Clone for DVec<T, VirtualMemoryManager> {
     }
 }
 
-impl<T, A: VirtualAllocator> DVec<T, A> {
+impl<T, A: StaticAllocator> DVec<T, A> {
     pub fn chunks<'a>(&'a self, chunk_size: usize) -> Chunks<'a, T> {
         self.data.chunks(chunk_size)
     }
@@ -98,7 +96,7 @@ impl<T, A: VirtualAllocator> DVec<T, A> {
         self.data.allocator().clone()
     }
 
-    pub fn into_owned_chunks(self, chunk_size: usize) -> Vec<DVec<T, A>> {
+    pub fn into_adjacent_chunks(mut self, chunk_size: usize) -> Vec<DVec<T, A>> {
         assert_eq!(self.len() % chunk_size, 0);
         let num_chunks = self.len() / chunk_size;
         let (original_ptr, _len, _cap, alloc) = self.data.into_raw_parts_with_alloc();
@@ -142,6 +140,18 @@ impl<T, A: VirtualAllocator> DVec<T, A> {
         let mut result = self.clone_range_to_host(pos..pos + 1)?;
         Ok(result.pop().unwrap())
     }
+
+    pub fn into_raw_parts_with_alloc(self) -> (*mut T, usize, usize, A) {
+        self.data.into_raw_parts_with_alloc()
+    }
+
+    pub fn from_raw_parts_in(ptr: *mut T, length: usize, capacity: usize, alloc: A) -> Self {
+        unsafe {
+            Self {
+                data: Vec::from_raw_parts_in(ptr, length, capacity, alloc),
+            }
+        }
+    }
 }
 
 impl DVec<F> {
@@ -152,7 +162,7 @@ impl DVec<F> {
     }
 }
 
-impl<T> DVec<T, VirtualMemoryManager> {
+impl<T> DVec<T, StaticDeviceAllocator> {
     pub fn from_vec(data: Vec<T>) -> CudaResult<Self> {
         let size = data.len();
         assert!(size.is_power_of_two());
@@ -163,7 +173,12 @@ impl<T> DVec<T, VirtualMemoryManager> {
         Ok(this)
     }
 
-    pub fn with_capacity_in(cap: usize, alloc: VirtualMemoryManager) -> Self {
+    pub fn with_capacity_in(cap: usize, alloc: StaticDeviceAllocator) -> Self {
+        if cap == 0 {
+            return Self {
+                data: Vec::with_capacity_in(0, alloc),
+            };
+        }
         // Allocator itself can handle padding but it is okey to do padding here,
         // since DVec is the entrypoint of the all allocations in gpu memory
         let cap_in_bytes = cap * std::mem::size_of::<T>();
@@ -185,25 +200,25 @@ impl<T> DVec<T, VirtualMemoryManager> {
     }
 }
 
-impl<T, A: VirtualAllocator> From<Vec<T, A>> for DVec<T, A> {
+impl<T, A: StaticAllocator> From<Vec<T, A>> for DVec<T, A> {
     fn from(data: Vec<T, A>) -> Self {
         Self { data }
     }
 }
 
-impl<T, A: VirtualAllocator> AsRef<[T]> for DVec<T, A> {
+impl<T, A: StaticAllocator> AsRef<[T]> for DVec<T, A> {
     fn as_ref(&self) -> &[T] {
         self.data.as_ref()
     }
 }
 
-impl<T, A: VirtualAllocator> AsMut<[T]> for DVec<T, A> {
+impl<T, A: StaticAllocator> AsMut<[T]> for DVec<T, A> {
     fn as_mut(&mut self) -> &mut [T] {
         self.data.as_mut()
     }
 }
 
-impl<T, A: VirtualAllocator> Deref for DVec<T, A> {
+impl<T, A: StaticAllocator> Deref for DVec<T, A> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -211,18 +226,18 @@ impl<T, A: VirtualAllocator> Deref for DVec<T, A> {
     }
 }
 
-impl<T, A: VirtualAllocator> DerefMut for DVec<T, A> {
+impl<T, A: StaticAllocator> DerefMut for DVec<T, A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data.deref_mut()
     }
 }
 
-pub struct DVecIterator<'a, T, A: VirtualAllocator> {
+pub struct DVecIterator<'a, T, A: StaticAllocator> {
     inner: &'a DVec<T, A>,
     index: usize,
 }
 
-impl<'a, T, A: VirtualAllocator> Iterator for DVecIterator<'a, T, A> {
+impl<'a, T, A: StaticAllocator> Iterator for DVecIterator<'a, T, A> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -236,7 +251,7 @@ impl<'a, T, A: VirtualAllocator> Iterator for DVecIterator<'a, T, A> {
     }
 }
 
-impl<'a, T, A: VirtualAllocator> IntoIterator for &'a DVec<T, A> {
+impl<'a, T, A: StaticAllocator> IntoIterator for &'a DVec<T, A> {
     type Item = &'a T;
 
     type IntoIter = DVecIterator<'a, T, A>;
@@ -255,7 +270,7 @@ macro_rules! dvec {
         DVec::new_in(_alloc().clone())
     };
     ($capacity:expr) => {
-        DVec::<_, VirtualMemoryManager>::with_capacity_in($capacity, _alloc().clone())
+        DVec::<_, StaticDeviceAllocator>::with_capacity_in($capacity, _alloc().clone())
     };
 }
 #[macro_export]
@@ -268,10 +283,15 @@ macro_rules! svec {
     };
 }
 
-pub type SVec<T> = DVec<T, SmallVirtualMemoryManager>;
+pub type SVec<T> = DVec<T, SmallStaticDeviceAllocator>;
 
 impl<T> SVec<T> {
-    pub fn with_capacity_in(cap: usize, alloc: SmallVirtualMemoryManager) -> Self {
+    pub fn with_capacity_in(cap: usize, alloc: SmallStaticDeviceAllocator) -> Self {
+        if cap == 0 {
+            return Self {
+                data: Vec::with_capacity_in(0, alloc),
+            };
+        }
         let cap_in_bytes = cap * std::mem::size_of::<T>();
         let block_size_in_bytes = _small_alloc().block_size_in_bytes();
         let padded_cap_in_bytes = calculate_padded_capacity(cap_in_bytes, block_size_in_bytes);
@@ -305,7 +325,7 @@ fn calculate_padded_capacity(actual_cap_in_bytes: usize, block_size_in_bytes: us
 }
 
 pub struct DF {
-    pub inner: DVec<F, SmallVirtualMemoryManager>,
+    pub inner: DVec<F, SmallStaticDeviceAllocator>,
 }
 
 impl Clone for DF {
@@ -322,14 +342,14 @@ impl std::fmt::Debug for DF {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let values = self.inner.to_vec().unwrap();
         assert_eq!(values.len(), 1);
-        write!(f, "{}", values[0])?;
+        write!(f, "{}", values[0]);
 
         Ok(())
     }
 }
 
 impl DF {
-    pub fn allocator(&self) -> SmallVirtualMemoryManager {
+    pub fn allocator(&self) -> SmallStaticDeviceAllocator {
         _small_alloc().clone()
     }
 

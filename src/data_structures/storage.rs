@@ -42,7 +42,7 @@ impl GenericStorage {
             num_polys,
             domain_size,
         } = self;
-        let chunks = inner.into_owned_chunks(domain_size);
+        let chunks = inner.into_adjacent_chunks(domain_size);
         assert_eq!(chunks.len(), num_polys);
 
         let mut polynomials = vec![];
@@ -64,7 +64,7 @@ impl GenericStorage {
         let domain_size = *domain_size;
         let mut storage_ref = &inner[..];
         let mut all_polys_ref = vec![];
-        for _idx in 0..num_polys {
+        for _ in 0..num_polys {
             let (values, remaining) = storage_ref.split_at(domain_size);
             let poly = Poly::<'a, P>::from(values);
             all_polys_ref.push(poly);
@@ -82,7 +82,7 @@ impl GenericStorage {
             num_polys,
             domain_size,
         } = self;
-        let chunks = inner.into_owned_chunks(domain_size);
+        let chunks = inner.into_adjacent_chunks(domain_size);
         assert_eq!(chunks.len(), num_polys);
         assert_eq!(chunks.len() % 2, 0);
 
@@ -127,16 +127,8 @@ impl<'a, P: PolyForm> GenericPolynomialStorage<'a, P> {
 }
 
 impl<'a, P: PolyForm> AsSingleSlice for GenericPolynomialStorage<'a, P> {
-    fn domain_size(&self) -> usize {
-        self.polynomials[0].domain_size()
-    }
-
-    fn num_polys(&self) -> usize {
-        self.polynomials.len()
-    }
-
     fn as_single_slice(&self) -> &[F] {
-        assert_adjacent(&self.polynomials);
+        assert_adjacent_base(&self.polynomials);
         let num_polys = self.polynomials.len();
         let domain_size = self.polynomials[0].domain_size();
         let len = num_polys * domain_size;
@@ -144,13 +136,21 @@ impl<'a, P: PolyForm> AsSingleSlice for GenericPolynomialStorage<'a, P> {
     }
 
     fn as_single_slice_mut(&mut self) -> &mut [F] {
-        assert_adjacent(&self.polynomials);
+        assert_adjacent_base(&self.polynomials);
         let num_polys = self.polynomials.len();
         let domain_size = self.polynomials[0].domain_size();
         let len = num_polys * domain_size;
         unsafe {
             std::slice::from_raw_parts_mut(self.polynomials[0].storage.as_mut().as_mut_ptr(), len)
         }
+    }
+
+    fn domain_size(&self) -> usize {
+        self.polynomials[0].domain_size()
+    }
+
+    fn num_polys(&self) -> usize {
+        self.polynomials.len()
     }
 }
 
@@ -180,14 +180,6 @@ impl<'a> LeafSourceQuery for GenericComplexPolynomialStorage<'a, CosetEvaluation
 }
 
 impl<'a, P: PolyForm> AsSingleSlice for GenericComplexPolynomialStorage<'a, P> {
-    fn domain_size(&self) -> usize {
-        self.polynomials[0].domain_size()
-    }
-
-    fn num_polys(&self) -> usize {
-        self.polynomials.len()
-    }
-
     fn as_single_slice(&self) -> &[F] {
         assert_adjacent_ext(&self.polynomials);
         let num_polys = 2 * self.polynomials.len();
@@ -207,6 +199,31 @@ impl<'a, P: PolyForm> AsSingleSlice for GenericComplexPolynomialStorage<'a, P> {
                 len,
             )
         }
+    }
+
+    fn domain_size(&self) -> usize {
+        self.polynomials[0].domain_size()
+    }
+
+    fn num_polys(&self) -> usize {
+        self.polynomials.len()
+    }
+}
+impl<'a, P: PolyForm> AsSingleSlice for &GenericComplexPolynomialStorage<'a, P> {
+    fn as_single_slice(&self) -> &[F] {
+        assert_adjacent_ext(&self.polynomials);
+        let num_polys = 2 * self.polynomials.len();
+        let domain_size = self.polynomials[0].domain_size();
+        let len = num_polys * domain_size;
+        unsafe { std::slice::from_raw_parts(self.polynomials[0].c0.storage.as_ref().as_ptr(), len) }
+    }
+    
+    fn domain_size(&self) -> usize {
+        self.polynomials[0].domain_size()
+    }
+
+    fn num_polys(&self) -> usize {
+        self.polynomials.len()
     }
 }
 
@@ -229,6 +246,10 @@ impl<'a, P: PolyForm> GenericComplexPolynomialStorage<'a, P> {
         mem::d2d(src, dst)?;
 
         Ok(new_storage)
+    }
+
+    fn num_polys(&self) -> usize {
+        self.polynomials.len()
     }
 }
 
@@ -264,7 +285,7 @@ impl<'a> GenericComplexPolynomialStorage<'a, CosetEvaluations> {
         let domain_size = self.polynomials[0].domain_size();
         let leaf_sources = self.as_single_slice();
         let mut subtree = dvec!(2 * NUM_EL_PER_HASH * domain_size);
-        primitives::tree::build_tree(leaf_sources, &mut subtree, domain_size, cap_size, 1)?;
+        crate::primitives::tree::build_tree(leaf_sources, &mut subtree, domain_size, cap_size, 1)?;
         let subtree_root = get_tree_cap_from_nodes(&subtree, cap_size)?;
         let subtree = SubTree::new(subtree, domain_size, cap_size, coset_idx);
 

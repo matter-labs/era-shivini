@@ -2,51 +2,137 @@ use super::*;
 
 pub struct ProverContext;
 
+pub const ZKSYNC_DEFAULT_TRACE_LOG_LENGTH: usize = 19;
+
 impl ProverContext {
     pub fn create() -> CudaResult<Self> {
         unsafe {
-            assert!(_CUDA_CONTEXT.is_none());
-            assert!(_ALLOCATOR.is_none());
-            assert!(_SMALL_ALLOCATOR.is_none());
-            assert!(_EXEC_STREAM.is_none());
-            assert!(_H2D_STREAM.is_none());
-            assert!(_D2H_STREAM.is_none());
+            assert!(_cuda_context.is_none());
+            assert!(_DEVICE_ALLOCATOR.is_none());
+            assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
+            assert!(_HOST_ALLOCATOR.is_none());
+            assert!(_SMALL_HOST_ALLOCATOR.is_none());
+            assert!(_exec_stream.is_none());
+            assert!(_h2d_stream.is_none());
+            assert!(_d2h_stream.is_none());
         }
         // size counts in field elements
-        let block_size = 1 << 20; // TODO:
-                                  // grab small slice then consume everything
+        let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
         let cuda_ctx = CudaContext::create(12, 12)?;
-        let small_alloc = SmallVirtualMemoryManager::init()?;
-        let alloc = VirtualMemoryManager::init_all(block_size)?;
+
+        // grab small slice then consume everything
+        let small_device_alloc = SmallStaticDeviceAllocator::init()?;
+        let device_alloc = StaticDeviceAllocator::init_all(block_size)?;
+
+        let small_host_alloc = SmallStaticHostAllocator::init()?;
+        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _CUDA_CONTEXT = Some(cuda_ctx);
-            _ALLOCATOR = Some(alloc);
-            _SMALL_ALLOCATOR = Some(small_alloc);
-            _EXEC_STREAM = Some(Stream::create()?);
-            _H2D_STREAM = Some(Stream::create()?);
-            _D2H_STREAM = Some(Stream::create()?);
+            _cuda_context = Some(cuda_ctx);
+            _DEVICE_ALLOCATOR = Some(device_alloc);
+            _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
+            _HOST_ALLOCATOR = Some(host_alloc);
+            _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
+            _exec_stream = Some(Stream::create()?);
+            _h2d_stream = Some(Stream::create()?);
+            _d2h_stream = Some(Stream::create()?);
         }
 
         Ok(Self {})
     }
 
-    #[cfg(test)]
+    pub(crate) fn create_14gb_dev(block_size: usize) -> CudaResult<Self> {
+        unsafe {
+            assert!(_cuda_context.is_none());
+            assert!(_DEVICE_ALLOCATOR.is_none());
+            assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
+            assert!(_HOST_ALLOCATOR.is_none());
+            assert!(_SMALL_HOST_ALLOCATOR.is_none());
+            assert!(_exec_stream.is_none());
+            assert!(_h2d_stream.is_none());
+            assert!(_d2h_stream.is_none());
+        }
+        // size counts in field elements
+        let cuda_ctx = CudaContext::create(12, 12)?;
+
+        // grab small slice then consume everything
+        let small_device_alloc = SmallStaticDeviceAllocator::init()?;
+        let device_alloc = StaticDeviceAllocator::init_14gb(block_size)?;
+        println!("allocated 14gb on device");
+        let small_host_alloc = SmallStaticHostAllocator::init()?;
+        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+
+        unsafe {
+            _cuda_context = Some(cuda_ctx);
+            _DEVICE_ALLOCATOR = Some(device_alloc);
+            _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
+            _HOST_ALLOCATOR = Some(host_alloc);
+            _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
+            _exec_stream = Some(Stream::create()?);
+            _h2d_stream = Some(Stream::create()?);
+            _d2h_stream = Some(Stream::create()?);
+        }
+
+        Ok(Self {})
+    }
+
+    pub fn create_14gb() -> CudaResult<Self> {
+        unsafe {
+            assert!(_cuda_context.is_none());
+            assert!(_DEVICE_ALLOCATOR.is_none());
+            assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
+            assert!(_HOST_ALLOCATOR.is_none());
+            assert!(_SMALL_HOST_ALLOCATOR.is_none());
+            assert!(_exec_stream.is_none());
+            assert!(_h2d_stream.is_none());
+            assert!(_d2h_stream.is_none());
+        }
+        // size counts in field elements
+        let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
+        let cuda_ctx = CudaContext::create(12, 12)?;
+
+        // grab small slice then consume everything
+        let small_device_alloc = SmallStaticDeviceAllocator::init()?;
+        let device_alloc = StaticDeviceAllocator::init_14gb(block_size)?;
+        println!("allocated 14gb on device");
+        let small_host_alloc = SmallStaticHostAllocator::init()?;
+        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+
+        unsafe {
+            _cuda_context = Some(cuda_ctx);
+            _DEVICE_ALLOCATOR = Some(device_alloc);
+            _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
+            _HOST_ALLOCATOR = Some(host_alloc);
+            _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
+            _exec_stream = Some(Stream::create()?);
+            _h2d_stream = Some(Stream::create()?);
+            _d2h_stream = Some(Stream::create()?);
+        }
+
+        Ok(Self {})
+    }
+
     pub(crate) fn dev(domain_size: usize) -> CudaResult<Self> {
         assert!(domain_size.is_power_of_two());
         // size counts in field elements
         let block_size = domain_size;
         let cuda_ctx = CudaContext::create(12, 12)?;
-        let small_alloc = SmallVirtualMemoryManager::init()?;
-        let alloc = VirtualMemoryManager::init_all(block_size)?;
+
+        let small_device_alloc = SmallStaticDeviceAllocator::init()?;
+        let device_alloc = StaticDeviceAllocator::init_all(block_size)?;
+
+        let small_host_alloc = SmallStaticHostAllocator::init()?;
+        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _CUDA_CONTEXT = Some(cuda_ctx);
-            _ALLOCATOR = Some(alloc);
-            _SMALL_ALLOCATOR = Some(small_alloc);
-            _EXEC_STREAM = Some(Stream::create()?);
-            _H2D_STREAM = Some(Stream::create()?);
-            _D2H_STREAM = Some(Stream::create()?);
+            _cuda_context = Some(cuda_ctx);
+            _DEVICE_ALLOCATOR = Some(device_alloc);
+            _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
+            _HOST_ALLOCATOR = Some(host_alloc);
+            _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
+            _exec_stream = Some(Stream::create()?);
+            _h2d_stream = Some(Stream::create()?);
+            _d2h_stream = Some(Stream::create()?);
         }
 
         Ok(Self {})
@@ -56,28 +142,42 @@ impl ProverContext {
 impl Drop for ProverContext {
     fn drop(&mut self) {
         unsafe {
-            let cuda_ctx = _CUDA_CONTEXT.take().expect("cuda ctx");
+            let cuda_ctx = _cuda_context.take().expect("cuda ctx");
             cuda_ctx.destroy().expect("destroy cuda ctx");
 
-            _ALLOCATOR.take().unwrap().free().expect("free allocator");
-            _SMALL_ALLOCATOR
+            _DEVICE_ALLOCATOR
+                .take()
+                .unwrap()
+                .free()
+                .expect("free allocator");
+            _SMALL_DEVICE_ALLOCATOR
                 .take()
                 .unwrap()
                 .free()
                 .expect("free small allocator");
-            _EXEC_STREAM
+            _HOST_ALLOCATOR
+                .take()
+                .unwrap()
+                .free()
+                .expect("free allocator");
+            _SMALL_HOST_ALLOCATOR
+                .take()
+                .unwrap()
+                .free()
+                .expect("free small allocator");
+            _exec_stream
                 .take()
                 .unwrap()
                 .inner
                 .destroy()
                 .expect("destroy stream");
-            _H2D_STREAM
+            _h2d_stream
                 .take()
                 .unwrap()
                 .inner
                 .destroy()
                 .expect("destroy h2d stream");
-            _D2H_STREAM
+            _d2h_stream
                 .take()
                 .unwrap()
                 .inner
@@ -87,22 +187,22 @@ impl Drop for ProverContext {
     }
 }
 
-pub(crate) static mut _CUDA_CONTEXT: Option<CudaContext> = None;
-pub(crate) static mut _EXEC_STREAM: Option<Stream> = None;
-pub(crate) static mut _H2D_STREAM: Option<Stream> = None;
-pub(crate) static mut _D2H_STREAM: Option<Stream> = None;
+pub(crate) static mut _cuda_context: Option<CudaContext> = None;
+pub(crate) static mut _exec_stream: Option<Stream> = None;
+pub(crate) static mut _h2d_stream: Option<Stream> = None;
+pub(crate) static mut _d2h_stream: Option<Stream> = None;
 
 pub(crate) fn get_stream() -> &'static CudaStream {
-    unsafe { &_EXEC_STREAM.as_ref().expect("execution stream").inner }
+    unsafe { &_exec_stream.as_ref().expect("execution stream").inner }
 }
 
 pub(crate) fn get_h2d_stream() -> &'static CudaStream {
-    // unsafe { &_H2D_STREAM.as_ref().expect("host to device stream").inner }
+    // unsafe { &_h2d_stream.as_ref().expect("host to device stream").inner }
     get_stream()
 }
 
 pub(crate) fn get_d2h_stream() -> &'static CudaStream {
-    // unsafe { &_D2H_STREAM.as_ref().expect("device to host stream").inner }
+    // unsafe { &_d2h_stream.as_ref().expect("device to host stream").inner }
     get_stream()
 }
 
@@ -130,21 +230,38 @@ impl Stream {
 unsafe impl Send for Stream {}
 unsafe impl Sync for Stream {}
 
-pub(crate) static mut _ALLOCATOR: Option<VirtualMemoryManager> = None;
-pub(crate) static mut _SMALL_ALLOCATOR: Option<SmallVirtualMemoryManager> = None;
+pub(crate) static mut _DEVICE_ALLOCATOR: Option<StaticDeviceAllocator> = None;
+pub(crate) static mut _SMALL_DEVICE_ALLOCATOR: Option<SmallStaticDeviceAllocator> = None;
+pub(crate) static mut _HOST_ALLOCATOR: Option<StaticHostAllocator> = None;
+pub(crate) static mut _SMALL_HOST_ALLOCATOR: Option<SmallStaticHostAllocator> = None;
 
-pub(crate) fn _alloc() -> &'static VirtualMemoryManager {
+pub(crate) fn _alloc() -> &'static StaticDeviceAllocator {
     unsafe {
-        &_ALLOCATOR
+        &_DEVICE_ALLOCATOR
             .as_ref()
-            .expect("allocator should be initialized")
+            .expect("device allocator should be initialized")
     }
 }
 
-pub(crate) fn _small_alloc() -> &'static SmallVirtualMemoryManager {
+pub(crate) fn _small_alloc() -> &'static SmallStaticDeviceAllocator {
     unsafe {
-        &_SMALL_ALLOCATOR
+        &_SMALL_DEVICE_ALLOCATOR
             .as_ref()
-            .expect("small allocator should be initialized")
+            .expect("small device allocator should be initialized")
+    }
+}
+pub(crate) fn _host_alloc() -> &'static StaticHostAllocator {
+    unsafe {
+        &_HOST_ALLOCATOR
+            .as_ref()
+            .expect("host allocator should be initialized")
+    }
+}
+
+pub(crate) fn _small_host_alloc() -> &'static SmallStaticHostAllocator {
+    unsafe {
+        &_SMALL_HOST_ALLOCATOR
+            .as_ref()
+            .expect("small host allocator should be initialized")
     }
 }

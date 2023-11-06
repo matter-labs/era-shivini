@@ -6,6 +6,8 @@ use boojum::{
         oracle::TreeHasher,
     },
     fft::bitreverse_enumeration_inplace,
+    field::{FieldExtension, U64Representable},
+    worker::Worker,
 };
 
 use super::*;
@@ -16,6 +18,21 @@ pub struct FRIOracle {
     pub num_leafs: usize,
     pub cap_size: usize,
     pub num_elems_per_leaf: usize,
+}
+
+impl AsSingleSlice for &FRIOracle {
+    fn domain_size(&self) -> usize {
+        assert_eq!(2 * NUM_EL_PER_HASH * self.num_leafs, self.nodes.len());
+        self.num_leafs
+    }
+
+    fn num_polys(&self) -> usize {
+        2
+    }
+
+    fn as_single_slice(&self) -> &[F] {
+        &self.nodes
+    }
 }
 
 impl FRIOracle {
@@ -76,7 +93,7 @@ impl TreeQuery for FRIOracle {
             }
             result.push(node_hash);
 
-            layer_start += num_leafs * NUM_EL_PER_HASH;
+            layer_start += (num_leafs * NUM_EL_PER_HASH);
             num_leafs >>= 1;
             tree_idx >>= 1;
         }
@@ -90,11 +107,23 @@ impl TreeQuery for FRIOracle {
 
 #[derive(Clone)]
 pub struct CodeWord {
-    c0: DVec<F>,
-    c1: DVec<F>,
+    storage: DVec<F>,
     blowup_factor: usize,
-    #[allow(dead_code)]
-    is_base_code_word: bool,
+    pub(crate) is_base_code_word: bool,
+}
+
+impl AsSingleSlice for &CodeWord {
+    fn domain_size(&self) -> usize {
+        self.length()
+    }
+
+    fn num_polys(&self) -> usize {
+        2
+    }
+
+    fn as_single_slice(&self) -> &[F] {
+        &self.storage
+    }
 }
 
 // for FRI oracles we may store multiple rows in single leaf
@@ -113,59 +142,125 @@ impl LeafSourceQuery for CodeWord {
         // treat first N bits as actual chunk id
         assert_eq!(self.blowup_factor, lde_degree);
         assert!(lde_degree > coset_idx);
-        assert_eq!(self.c0.len(), domain_size * lde_degree);
-        assert_eq!(self.c1.len(), domain_size * lde_degree);
+        assert_eq!(self.storage.len(), 2 * domain_size * lde_degree);
 
+        assert!(num_elements_per_leaf.is_power_of_two());
         let inner_idx = row_idx >> num_elements_per_leaf.trailing_zeros();
         let inner_start_aligned = inner_idx * num_elements_per_leaf;
 
         let start = coset_idx * domain_size + inner_start_aligned;
         let end = start + num_elements_per_leaf;
         assert!(end <= self.length());
-
-        let c0_values = self.c0.clone_range_to_host(start..end)?;
-        values[..num_elements_per_leaf].copy_from_slice(&c0_values);
-
-        let c1_values = self.c1.clone_range_to_host(start..end)?;
-        values[num_elements_per_leaf..].copy_from_slice(&c1_values);
+        assert_eq!(self.storage.len(), 2 * self.length());
+        let (c0_storage, c1_storage) = self.storage.split_at(self.length());
+        mem::d2h(
+            &c0_storage[start..end],
+            &mut values[..num_elements_per_leaf],
+        )?;
+        mem::d2h(
+            &c1_storage[start..end],
+            &mut values[num_elements_per_leaf..],
+        )?;
 
         Ok(values)
     }
 }
 
+pub fn compute_effective_indexes_for_fri_layers(
+    fri_holder: &FRICache,
+    query_details_for_cosets: &Vec<Vec<u32>>,
+) -> CudaResult<Vec<Vec<DVec<u32, SmallStaticDeviceAllocator>>>> {
+    let fri_lde_degree = fri_holder.fri_lde_degree;
+    let folding_schedule = &fri_holder.folding_schedule;
+    assert_eq!(fri_lde_degree, 2);
+    let mut query_indexes: Vec<Vec<u32>> = query_details_for_cosets.iter().cloned().collect();
+    let mut effective_fri_indexes_for_all = vec![];
+    for (layer_idx, (codeword, oracle)) in fri_holder.flatten().into_iter().enumerate() {
+        let mut indexes = vec![];
+        for coset_idx in 0..fri_lde_degree {
+            // codewords store lde values but we need original domain size
+            let domain_size = codeword.length() / fri_lde_degree;
+            let num_elems_per_leaf = oracle.num_elems_per_leaf;
+            let schedule = folding_schedule[layer_idx];
+            assert_eq!(num_elems_per_leaf, 1 << schedule);
+            assert_eq!(
+                fri_lde_degree * domain_size,
+                num_elems_per_leaf * oracle.num_leafs
+            );
+            let query_indexes = &mut query_indexes[coset_idx];
+            let mut d_queries = svec!(query_indexes.len());
+            let effective_indexes = compute_effective_indexes(
+                query_indexes,
+                coset_idx,
+                domain_size,
+                num_elems_per_leaf,
+            );
+            assert_eq!(effective_indexes.len(), query_indexes.len());
+            mem::h2d(&effective_indexes, &mut d_queries)?;
+            indexes.push(d_queries);
+            query_indexes.iter_mut().for_each(|i| *i >>= schedule);
+        }
+        effective_fri_indexes_for_all.push(indexes);
+    }
+
+    Ok(effective_fri_indexes_for_all)
+}
+
+pub(crate) fn compute_effective_indexes(
+    indexes: &[u32],
+    coset_idx: usize,
+    domain_size: usize,
+    num_elems_per_leaf: usize,
+) -> Vec<u32> {
+    assert!(num_elems_per_leaf.is_power_of_two());
+    let log2_schedule = num_elems_per_leaf.trailing_zeros();
+    indexes
+        .iter()
+        .map(|&index| (index + (coset_idx * domain_size) as u32) >> log2_schedule)
+        .collect()
+}
+
 impl CodeWord {
-    #[allow(dead_code)]
-    pub fn new_base(c0: DVec<F>, c1: DVec<F>, blowup_factor: usize) -> Self {
-        assert_eq!(c0.len(), c1.len());
+    pub fn new_base_assuming_adjacent(storage: DVec<F>, blowup_factor: usize) -> Self {
+        assert_eq!(blowup_factor, 2);
+        assert!(storage.len().is_power_of_two());
         Self {
-            c0,
-            c1,
+            storage,
             blowup_factor,
             is_base_code_word: true,
         }
     }
-
-    pub fn new(c0: DVec<F>, c1: DVec<F>, blowup_factor: usize) -> Self {
-        assert_eq!(c0.len(), c1.len());
+    pub fn new_assuming_adjacent(storage: DVec<F>, blowup_factor: usize) -> Self {
+        assert_eq!(blowup_factor, 2);
+        assert!(storage.len().is_power_of_two());
         Self {
-            c0,
-            c1,
+            storage,
             blowup_factor,
             is_base_code_word: false,
         }
     }
 
-    pub fn length(&self) -> usize {
-        self.c0.len()
+    pub fn new(c0: DVec<F>, c1: DVec<F>, blowup_factor: usize) -> CudaResult<Self> {
+        assert_eq!(c0.len(), c1.len());
+        let len = c0.len();
+        assert!(len.is_power_of_two());
+        let mut storage = dvec!(2 * len);
+        mem::d2d(&c0, &mut storage[..len])?;
+        mem::d2d(&c1, &mut storage[len..])?;
+
+        Ok(Self {
+            storage,
+            blowup_factor,
+            is_base_code_word: false,
+        })
     }
 
-    fn into_owned_leaf_sources(&self) -> CudaResult<DVec<F>> {
-        let len = self.length();
-        let mut sources = dvec!(len * 2);
-        mem::d2d(&self.c0[..], &mut sources[..len])?;
-        mem::d2d(&self.c1[..], &mut sources[len..])?;
-
-        Ok(sources)
+    pub fn length(&self) -> usize {
+        assert_eq!(self.blowup_factor, 2);
+        assert!(self.storage.len().is_power_of_two());
+        let domain_size = self.storage.len() / 2;
+        assert!(domain_size.is_power_of_two());
+        domain_size
     }
 
     pub fn compute_oracle(
@@ -173,11 +268,10 @@ impl CodeWord {
         cap_size: usize,
         num_elems_per_leaf: usize,
     ) -> CudaResult<FRIOracle> {
-        let num_leafs = self.c0.len() / num_elems_per_leaf;
-        let result_len = 2 * NUM_EL_PER_HASH * num_leafs;
-        let mut result = dvec!(result_len);
+        let num_leafs = self.length() / num_elems_per_leaf;
+        let mut result = dvec!(2 * NUM_EL_PER_HASH * num_leafs);
         tree::build_tree(
-            &self.into_owned_leaf_sources()?,
+            self.as_single_slice(),
             &mut result,
             self.length(),
             cap_size,
@@ -204,72 +298,152 @@ impl FoldingOperator {
         Ok(Self { coset_inverse })
     }
 
-    pub fn fold_multiple(
+    pub fn fold_flattened_multiple(
         &mut self,
-        code_word: &CodeWord,
+        codeword: &CodeWord,
         challenges: Vec<DExt>,
     ) -> CudaResult<CodeWord> {
-        let mut prev_c0 = code_word.c0.clone();
-        let mut prev_c1 = code_word.c1.clone();
-        assert_eq!(prev_c0.len(), prev_c1.len());
-        assert!(prev_c0.len().is_power_of_two());
+        assert!(codeword.length().is_power_of_two());
+        let mut prev = &codeword.storage;
 
+        let mut all_codewords = vec![];
         for challenge in challenges {
-            let coset_inverse: DF = self.coset_inverse.into();
-            let fold_size = prev_c0.len() >> 1;
-            // FIXME
-            let mut folded_c0_values = dvec!(fold_size);
-            let mut folded_c1_values = dvec!(fold_size);
-            arith::fold(
-                &prev_c0,
-                &prev_c1,
-                &mut folded_c0_values,
-                &mut folded_c1_values,
-                coset_inverse.clone(),
-                challenge.clone(),
-            )?;
-
-            prev_c0 = folded_c0_values;
-            prev_c1 = folded_c1_values;
+            let fold_size = prev.len() >> 1;
+            let mut result = dvec!(fold_size);
+            arith::fold_flattened(prev, &mut result, self.coset_inverse, &challenge)?;
+            all_codewords.push(result);
+            prev = &all_codewords.last().unwrap();
 
             self.coset_inverse.square();
         }
 
-        Ok(CodeWord::new(prev_c0, prev_c1, code_word.blowup_factor))
+        let last = all_codewords.pop().unwrap();
+        Ok(CodeWord::new_assuming_adjacent(
+            last,
+            codeword.blowup_factor,
+        ))
     }
 }
 
-pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>>(
+pub struct FRICache {
+    pub(crate) base_codeword: CodeWord,
+    pub(crate) intermediate_codewords: Vec<CodeWord>,
+    pub(crate) base_oracle: FRIOracle,
+    pub(crate) intermediate_oracles: Vec<FRIOracle>,
+    pub(crate) fri_lde_degree: usize,
+    pub(crate) folding_schedule: Vec<usize>,
+}
+
+impl FRICache {
+    pub fn flatten(&self) -> Vec<(&CodeWord, &FRIOracle)> {
+        let mut fri_layers = vec![];
+        fri_layers.push((&self.base_codeword, &self.base_oracle));
+        for l in self
+            .intermediate_codewords
+            .iter()
+            .zip(self.intermediate_oracles.iter())
+        {
+            fri_layers.push(l)
+        }
+
+        fri_layers
+    }
+
+    pub fn base_oracle_batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
+        &mut self,
+        layer_idx: usize,
+        d_indexes: &DVec<u32, SmallStaticDeviceAllocator>,
+        num_queries: usize,
+        domain_size: usize,
+        h_all_leaf_elems: &mut Vec<F, A>,
+        h_all_proofs: &mut Vec<F, A>,
+    ) -> CudaResult<()> {
+        assert_eq!(layer_idx, 0);
+        assert!(self.base_codeword.is_base_code_word);
+        assert_eq!(domain_size, self.base_codeword.length());
+        let num_elems_per_leaf = 1 << self.folding_schedule[0];
+        assert_eq!(domain_size / num_elems_per_leaf, self.base_oracle.num_leafs);
+        batch_query::<H, A>(
+            d_indexes,
+            num_queries,
+            &self.base_codeword,
+            2,
+            &self.base_oracle,
+            self.base_oracle.cap_size,
+            domain_size,
+            num_elems_per_leaf,
+            h_all_leaf_elems,
+            h_all_proofs,
+        )
+    }
+
+    pub fn intermediate_oracle_batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
+        &mut self,
+        layer_idx: usize,
+        d_indexes: &DVec<u32, SmallStaticDeviceAllocator>,
+        num_queries: usize,
+        domain_size: usize,
+        h_all_leaf_elems: &mut Vec<F, A>,
+        h_all_proofs: &mut Vec<F, A>,
+    ) -> CudaResult<()> {
+        assert!(layer_idx < self.folding_schedule.len());
+        let current_codeword = &self.intermediate_codewords[layer_idx - 1];
+        let current_oracle = &self.intermediate_oracles[layer_idx - 1];
+        assert_eq!(current_codeword.is_base_code_word, false);
+        assert_eq!(domain_size, current_codeword.length());
+        let num_elems_per_leaf = 1 << self.folding_schedule[layer_idx];
+        assert_eq!(domain_size / num_elems_per_leaf, current_oracle.num_leafs);
+        batch_query::<H, A>(
+            d_indexes,
+            num_queries,
+            current_codeword,
+            2,
+            current_oracle,
+            current_oracle.cap_size,
+            domain_size,
+            num_elems_per_leaf,
+            h_all_leaf_elems,
+            h_all_proofs,
+        )
+    }
+}
+
+pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     base_code_word: CodeWord,
     transcript: &mut T,
     folding_schedule: Vec<usize>,
-    lde_degree: usize,
+    fri_lde_degree: usize,
     cap_size: usize,
-) -> CudaResult<(FRIOracle, Vec<CodeWord>, Vec<FRIOracle>, [Vec<F>; 2])> {
-    let full_size = base_code_word.c0.len();
-    let degree = full_size / lde_degree;
+    worker: &Worker,
+) -> CudaResult<(FRICache, [Vec<F>; 2])> {
+    let full_size = base_code_word.length();
+    let degree = full_size / fri_lde_degree;
     let mut final_degree = degree;
     for interpolation_log2 in folding_schedule.iter() {
         let factor = 1usize << interpolation_log2;
         final_degree /= factor;
     }
 
-    assert!(final_degree > 0);
+    assert!(final_degree.is_power_of_two());
     let mut operator = FoldingOperator::init()?;
 
     let mut intermediate_oracles = vec![];
-    let mut intermediate_code_words = vec![];
+    let mut intermediate_codewords = vec![];
     let mut prev_code_word = &base_code_word;
 
-    for (_layer_idx, log_schedule) in folding_schedule.into_iter().enumerate() {
+    for (layer_idx, log_schedule) in folding_schedule.iter().cloned().enumerate() {
         let num_elems_per_leaf = 1 << log_schedule;
         let num_layers_to_skip = log_schedule;
 
         assert!(num_elems_per_leaf > 0);
         assert!(num_elems_per_leaf < 1 << 4);
 
-        assert_eq!(prev_code_word.c0.len() % num_elems_per_leaf, 0);
+        assert_eq!(prev_code_word.length() % num_elems_per_leaf, 0);
         let current_oracle = prev_code_word.compute_oracle(cap_size, num_elems_per_leaf)?;
+        assert_eq!(
+            current_oracle.num_leafs,
+            prev_code_word.length() / num_elems_per_leaf
+        );
         let oracle_cap = current_oracle.get_tree_cap()?;
         intermediate_oracles.push(current_oracle);
 
@@ -284,35 +458,39 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>>(
             h_challenge.square();
         }
 
-        let folded_code_word = operator.fold_multiple(prev_code_word, challenge_powers)?;
-        intermediate_code_words.push(folded_code_word);
+        let folded_code_word =
+            operator.fold_flattened_multiple(prev_code_word, challenge_powers)?;
+        intermediate_codewords.push(folded_code_word);
 
-        prev_code_word = intermediate_code_words.last().unwrap();
+        prev_code_word = intermediate_codewords.last().unwrap();
     }
 
     let first_oracle = intermediate_oracles.drain(0..1).next().unwrap();
-    let _first_code_word = base_code_word;
 
-    let last_code_word = intermediate_code_words.last().unwrap().clone();
     // since last codeword is tiny we can do ifft and asserts on the cpu
-    let mut last_c0 = last_code_word.c0.to_vec()?;
-    let mut last_c1 = last_code_word.c1.to_vec()?;
+    let last_code_word = intermediate_codewords.pop().unwrap();
+    let last_code_len = last_code_word.length();
+    dbg!(last_code_word.length().trailing_zeros());
+    let mut last_code_word_flattened = last_code_word.storage.to_vec_in(A::default())?;
+    // FIXME: we can still construct monomials on the device for better stream handling
+    synchronize_streams()?;
+    assert_eq!(last_code_word_flattened.len(), 2 * last_code_len);
+    let mut last_c0 = last_code_word_flattened[..last_code_len].to_vec_in(A::default());
+    let mut last_c1 = last_code_word_flattened[last_code_len..].to_vec_in(A::default());
 
     bitreverse_enumeration_inplace(&mut last_c0);
     bitreverse_enumeration_inplace(&mut last_c1);
 
-    let last_coset_inverse = operator.coset_inverse.clone();
+    let mut last_coset_inverse = operator.coset_inverse.clone();
 
     let coset = last_coset_inverse.inverse().unwrap();
     // IFFT our presumable LDE of some low degree poly
     let fft_size = last_c0.len();
-    use boojum::worker::Worker;
-    let worker = Worker::new();
     let roots: Vec<F> = precompute_twiddles_for_fft::<_, _, _, true>(fft_size, &worker, &mut ());
     boojum::fft::ifft_natural_to_natural(&mut last_c0, coset, &roots[..fft_size / 2]);
     boojum::fft::ifft_natural_to_natural(&mut last_c1, coset, &roots[..fft_size / 2]);
 
-    assert_eq!(final_degree, fft_size / lde_degree);
+    assert_eq!(final_degree, fft_size / fri_lde_degree);
 
     // self-check
     if boojum::config::DEBUG_SATISFIABLE == false {
@@ -331,13 +509,15 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>>(
 
     // now we should do some PoW and we are good to go
 
-    let monomial_form_0 = last_c0[..(fft_size / lde_degree)].to_vec();
-    let monomial_form_1 = last_c1[..(fft_size / lde_degree)].to_vec();
-
-    Ok((
-        first_oracle,
-        intermediate_code_words,
+    let monomial_form_0 = last_c0[..(fft_size / fri_lde_degree)].to_vec();
+    let monomial_form_1 = last_c1[..(fft_size / fri_lde_degree)].to_vec();
+    let fri_holder = FRICache {
+        base_codeword: base_code_word,
+        base_oracle: first_oracle,
+        intermediate_codewords,
         intermediate_oracles,
-        [monomial_form_0, monomial_form_1],
-    ))
+        folding_schedule,
+        fri_lde_degree,
+    };
+    Ok((fri_holder, [monomial_form_0, monomial_form_1]))
 }

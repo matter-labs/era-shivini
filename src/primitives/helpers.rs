@@ -1,7 +1,7 @@
 use boojum_cuda::{
     ops_complex::{get_powers_of_g, get_powers_of_w},
     ops_cub::device_scan::get_scan_temp_storage_bytes,
-    ops_simple::{set_by_ref, set_to_zero},
+    ops_simple::{set_by_ref, set_to_zero, SetByRef},
 };
 use cudart::slice::DeviceVariable;
 
@@ -84,6 +84,16 @@ pub fn set_value(buffer: &mut [F], value: &DF) -> CudaResult<()> {
     let (buffer, value) = unsafe {
         let d_var = DeviceVariable::from_ref(&value.inner[0]);
         (DeviceSlice::from_mut_slice(buffer), d_var)
+    };
+    set_by_ref(value, buffer, get_stream())
+}
+
+// value is host value
+pub fn set_value_generic<T: SetByRef>(buffer: &mut [T], value: &T) -> CudaResult<()> {
+    assert!(buffer.is_empty() == false);
+    let (buffer, value) = unsafe {
+        let h_var = DeviceVariable::from_ref(value);
+        (DeviceSlice::from_mut_slice(buffer), h_var)
     };
     set_by_ref(value, buffer, get_stream())
 }

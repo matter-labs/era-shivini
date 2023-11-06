@@ -1,19 +1,25 @@
 use boojum::{
+    config::{CSConfig, CSSetupConfig},
     cs::{
         implementations::{
-            hints::DenseVariablesCopyHint, polynomial_storage::SetupBaseStorage, setup::TreeNode,
+            fast_serialization::MemcopySerializable,
+            hints::{DenseVariablesCopyHint, DenseWitnessCopyHint},
+            polynomial_storage::SetupBaseStorage,
+            reference_cs::CSReferenceAssembly,
+            setup::TreeNode,
             utils::make_non_residues,
         },
         oracle::merkle_tree::MerkleTreeWithCap,
-        traits::GoodAllocator,
-        Variable,
+        Place, Variable, Witness,
     },
+    field::U64Representable,
     worker::Worker,
 };
 use boojum_cuda::ops_complex::pack_variable_indexes;
-use cudart::slice::{CudaSlice, DeviceSlice};
+use cudart::slice::{CudaSlice, CudaSliceMut, DeviceSlice};
 
 use super::*;
+pub(crate) const PACKED_PLACEHOLDER_BITMASK: u32 = 1 << 31;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct GpuSetup<A: GoodAllocator> {
@@ -26,85 +32,53 @@ pub struct GpuSetup<A: GoodAllocator> {
     #[serde(serialize_with = "boojum::utils::serialize_vec_vec_with_allocators")]
     #[serde(deserialize_with = "boojum::utils::deserialize_vec_vec_with_allocators")]
     pub variables_hint: Vec<Vec<u32, A>>,
+    #[serde(serialize_with = "boojum::utils::serialize_vec_vec_with_allocators")]
+    #[serde(deserialize_with = "boojum::utils::deserialize_vec_vec_with_allocators")]
+    pub witnesses_hint: Vec<Vec<u32, A>>,
     pub table_ids_column_idxes: Vec<usize>,
     pub selectors_placement: TreeNode,
-    setup_tree: MerkleTreeWithCap<F, DefaultTreeHasher>,
+    pub setup_tree: MerkleTreeWithCap<F, DefaultTreeHasher>,
     pub layout: SetupLayout,
 }
 
-pub fn transform_variable_indexes_on_host(
-    variables: &Vec<Vec<Variable>>,
-    worker: &Worker,
-) -> Vec<Vec<u32>> {
-    let num_cols = variables.len();
-    assert!(num_cols > 0);
-    let domain_size = variables[0].len();
-    let _num_cells = num_cols * domain_size;
-
-    for col in variables[1..].iter() {
-        assert_eq!(col.len(), domain_size);
-    }
-
-    assert_eq!(std::mem::size_of::<Variable>(), std::mem::size_of::<u64>());
-
-    let mut transformed_hints = vec![vec![0u32; domain_size]; num_cols];
-
-    worker.scope(variables.len(), |_scope, chunk_size| {
-        for (src_chunk, dst_chunk) in variables
-            .chunks(chunk_size)
-            .zip(transformed_hints.chunks_mut(chunk_size))
-        {
-            for (src_col, dst_col) in src_chunk.iter().zip(dst_chunk.iter_mut()) {
-                assert_eq!(src_col.len(), dst_col.len());
-                for (src, dst) in src_col.iter().zip(dst_col.iter_mut()) {
-                    if src.is_placeholder() {
-                        continue;
-                    }
-                    *dst = src.as_variable_index();
-                }
-            }
-        }
-    });
-
-    transformed_hints
-}
-
-pub fn transform_variable_indexes_on_device<A: GoodAllocator>(
-    variables_hint: &Vec<Vec<Variable>>,
+pub fn transform_indexes_on_device<A: GoodAllocator, T>(
+    variables_hint: Vec<Vec<T>>,
 ) -> CudaResult<Vec<Vec<u32, A>>> {
-    let num_cols = variables_hint.len();
-    let domain_size = variables_hint[0].len();
-    let num_cells = num_cols * domain_size;
-
-    for col in variables_hint.iter() {
-        assert_eq!(col.len(), domain_size);
+    if variables_hint.is_empty() {
+        return Ok(vec![]);
     }
+    // we want to keep size of the hints as small as possible
+    // that's why we expect them to be "unpadded" and padding will be
+    // applied during materializiation of the corresponding values
+    // e.g permutation cols, variable cols etc.
+    let num_cols = variables_hint.len();
+    let total_size = variables_hint.iter().map(|col| col.len()).sum();
 
-    assert_eq!(std::mem::size_of::<Variable>(), std::mem::size_of::<u64>());
+    assert_eq!(std::mem::size_of::<T>(), std::mem::size_of::<u64>());
 
     let mut transformed_hints = Vec::with_capacity(num_cols);
-    for _ in 0..num_cols {
-        let mut col = Vec::with_capacity_in(domain_size, A::default());
-        unsafe { col.set_len(domain_size) }
-        transformed_hints.push(col);
+    for col in variables_hint.iter() {
+        assert!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK != 0);
+        let mut new = Vec::with_capacity_in(col.len(), A::default());
+        unsafe { new.set_len(col.len()) }
+        transformed_hints.push(new);
     }
 
     let alloc = _alloc().clone();
 
     let mut original_variables =
-        DVec::<u64, VirtualMemoryManager>::with_capacity_in(num_cells, alloc.clone());
+        DVec::<u64, StaticDeviceAllocator>::with_capacity_in(total_size, alloc.clone());
     let mut transformed_variables =
-        DVec::<u32, VirtualMemoryManager>::with_capacity_in(num_cells, alloc);
-
-    for (src, dst) in variables_hint
-        .iter()
-        .zip(original_variables.chunks_mut(domain_size))
-    {
-        let src = unsafe {
-            assert_eq!(src.len(), domain_size);
-            std::slice::from_raw_parts(src.as_ptr() as *const _, domain_size)
-        };
+        DVec::<u32, StaticDeviceAllocator>::with_capacity_in(total_size, alloc);
+    // this is a transfer between same shape buffers
+    // we have avoided to flatten source values whereas destination is already flattened
+    let mut start = 0;
+    for src in variables_hint.iter() {
+        let src = unsafe { std::slice::from_raw_parts(src.as_ptr() as *const _, src.len()) };
+        let end = start + src.len();
+        let dst = &mut original_variables[start..end];
         mem::h2d(src, dst)?;
+        start = end;
     }
 
     let (d_variables, d_variables_transformed) = unsafe {
@@ -116,14 +90,100 @@ pub fn transform_variable_indexes_on_device<A: GoodAllocator>(
 
     pack_variable_indexes(d_variables, d_variables_transformed, get_stream())?;
 
-    for (src, dst) in transformed_variables
-        .chunks(domain_size)
-        .zip(transformed_hints.iter_mut())
-    {
+    let mut start = 0;
+    for dst in transformed_hints.iter_mut() {
+        let end = start + dst.len();
+        let src = &transformed_variables[start..end];
         mem::d2h(src, dst)?;
+        start = end;
     }
 
     Ok(transformed_hints)
+}
+
+pub fn transform_variable_indexes<A: GoodAllocator>(
+    hints: Vec<Vec<Variable>>,
+    worker: &Worker,
+) -> Vec<Vec<u32, A>> {
+    let num_cols = hints.len();
+    assert!(num_cols > 0);
+    let mut transformed_hints = Vec::with_capacity(num_cols);
+    for col in hints.iter() {
+        assert_eq!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
+        let mut new = Vec::with_capacity_in(col.len(), A::default());
+        unsafe {
+            new.set_len(col.len());
+        }
+        transformed_hints.push(new);
+    }
+    assert_eq!(std::mem::size_of::<Variable>(), std::mem::size_of::<u64>());
+
+    worker.scope(hints.len(), |scope, chunk_size| {
+        for (src_cols_chunk, dst_cols_chunk) in hints
+            .chunks(chunk_size)
+            .zip(transformed_hints.chunks_mut(chunk_size))
+        {
+            assert_eq!(src_cols_chunk.len(), dst_cols_chunk.len());
+            scope.spawn(move |_| {
+                for (src_col, dst_col) in src_cols_chunk.iter().zip(dst_cols_chunk.iter_mut()) {
+                    assert_eq!(src_col.len(), dst_col.len());
+                    for (src, dst) in src_col.iter().zip(dst_col.iter_mut()) {
+                        if src.is_placeholder() {
+                            *dst = PACKED_PLACEHOLDER_BITMASK;
+                        } else {
+                            *dst = src.as_variable_index();
+                        }
+                    }
+                }
+            })
+        }
+    });
+
+    transformed_hints
+}
+
+pub fn transform_witness_indexes<A: GoodAllocator>(
+    hints: Vec<Vec<Witness>>,
+    worker: &Worker,
+) -> Vec<Vec<u32, A>> {
+    let num_cols = hints.len();
+    if num_cols == 0 {
+        return vec![];
+    }
+    let mut transformed_hints = Vec::with_capacity(num_cols);
+    for col in hints.iter() {
+        // still good to check max number of witness values can't fit into u32
+        assert_eq!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
+        let mut new = Vec::with_capacity_in(col.len(), A::default());
+        unsafe {
+            new.set_len(col.len());
+        }
+        transformed_hints.push(new);
+    }
+    assert_eq!(std::mem::size_of::<Variable>(), std::mem::size_of::<u64>());
+
+    worker.scope(hints.len(), |scope, chunk_size| {
+        for (src_cols_chunk, dst_cols_chunk) in hints
+            .chunks(chunk_size)
+            .zip(transformed_hints.chunks_mut(chunk_size))
+        {
+            assert_eq!(src_cols_chunk.len(), dst_cols_chunk.len());
+            scope.spawn(move |_| {
+                for (src_col, dst_col) in src_cols_chunk.iter().zip(dst_cols_chunk.iter_mut()) {
+                    assert_eq!(src_col.len(), dst_col.len());
+                    for (src, dst) in src_col.iter().zip(dst_col.iter_mut()) {
+                        if src.is_placeholder() {
+                            *dst = PACKED_PLACEHOLDER_BITMASK;
+                        } else {
+                            *dst = src.as_witness_index() as u32;
+                        }
+                    }
+                }
+            })
+        }
+    });
+
+    transformed_hints
 }
 
 impl<A: GoodAllocator> GpuSetup<A> {
@@ -132,19 +192,15 @@ impl<A: GoodAllocator> GpuSetup<A> {
     >(
         base_setup: SetupBaseStorage<F, P, Global, Global>,
         setup_tree: MerkleTreeWithCap<F, DefaultTreeHasher>,
-        mut variables_hint: DenseVariablesCopyHint,
+        variables_hint: DenseVariablesCopyHint,
+        witnesses_hint: DenseWitnessCopyHint,
+        worker: &Worker,
     ) -> CudaResult<Self> {
-        assert!(variables_hint.maps.len() < u32::MAX as usize);
         assert_eq!(
             variables_hint.maps.len(),
             base_setup.copy_permutation_polys.len()
         );
         let domain_size = base_setup.copy_permutation_polys[0].domain_size();
-        for col in variables_hint.maps.iter_mut() {
-            assert!(col.len() <= domain_size);
-            col.resize(domain_size, Variable::placeholder());
-        }
-
         let layout = SetupLayout::from_base_setup_and_hints(&base_setup);
 
         let SetupBaseStorage {
@@ -154,11 +210,9 @@ impl<A: GoodAllocator> GpuSetup<A> {
             selectors_placement,
             ..
         } = base_setup;
-        let _worker = &Worker::new();
-        // TODO: use host based index tranformation
-        // let transformed_hints = transform_variable_indexes_on_host(&variables_hint.maps, worker);
-        let transformed_hints = transform_variable_indexes_on_device(&variables_hint.maps)?;
-        synchronize_streams()?;
+
+        let transformed_variables_hints = transform_variable_indexes(variables_hint.maps, worker);
+        let transformed_witnesses_hints = transform_witness_indexes(witnesses_hint.maps, worker);
 
         let mut constant_cols_in = Vec::with_capacity(constant_columns.len());
         for src in constant_columns.iter() {
@@ -179,7 +233,8 @@ impl<A: GoodAllocator> GpuSetup<A> {
             lookup_tables_columns: lookup_tables_columns_in,
             table_ids_column_idxes,
             selectors_placement,
-            variables_hint: transformed_hints,
+            variables_hint: transformed_variables_hints,
+            witnesses_hint: transformed_witnesses_hints,
             setup_tree,
             layout,
         })
@@ -205,7 +260,7 @@ pub fn calculate_tmp_buffer_size(
 fn materialize_non_residues(
     num_cols: usize,
     domain_size: usize,
-) -> CudaResult<DVec<F, SmallVirtualMemoryManager>> {
+) -> CudaResult<DVec<F, SmallStaticDeviceAllocator>> {
     let mut non_residues = Vec::with_capacity(num_cols);
     non_residues.push(F::ONE);
     non_residues.extend_from_slice(&make_non_residues::<F>(num_cols - 1, domain_size));
@@ -217,41 +272,42 @@ fn materialize_non_residues(
 
 pub fn materialize_permutation_cols_from_transformed_hints_into<'a, A: GoodAllocator>(
     d_result: &mut [F],
-    variables_hint: &Vec<Vec<u32, A>>,
+    variables_hint: &Vec<Vec<u32, A>>, // TODO: reuse variables from variable assignment
+    domain_size: usize,
 ) -> CudaResult<()> {
     assert!(variables_hint.is_empty() == false);
-
-    let domain_size = variables_hint[0].len();
     assert!(domain_size.is_power_of_two());
-    for col in variables_hint.iter() {
-        assert_eq!(col.len(), domain_size);
-    }
-    let alloc = _alloc().clone();
 
     let num_cols = variables_hint.len();
     let num_cells = num_cols * domain_size;
+    assert_eq!(d_result.len(), num_cells);
+
+    let alloc = _alloc().clone();
     // FIXME: although it fails with actual number of bytes, it works with padded value
     let tmp_storage_size_in_bytes =
         calculate_tmp_buffer_size(num_cells, alloc.block_size_in_bytes())?;
 
     let mut d_tmp_storage: DVec<u8> = dvec!(tmp_storage_size_in_bytes);
     let mut d_variables_transformed =
-        DVec::<u32, VirtualMemoryManager>::with_capacity_in(num_cells, alloc);
+        DVec::<u32, StaticDeviceAllocator>::with_capacity_in(num_cells, alloc);
 
-    if is_adjacent(&variables_hint) {
-        let flattened_variables = unsafe {
-            std::slice::from_raw_parts(variables_hint[0].as_ptr() as *const u32, num_cells)
-        };
-        mem::h2d(flattened_variables, &mut d_variables_transformed)?;
-    } else {
-        for (src, dst) in variables_hint
-            .iter()
-            .zip(d_variables_transformed.chunks_mut(domain_size))
-        {
-            mem::h2d(src, dst)?;
+    // this is a transfer between different shape buffers
+    // we have avoided to flatten source values whereas destination is already flattened
+    let mut d_bitmask = dvec!(1);
+    mem::h2d(&[PACKED_PLACEHOLDER_BITMASK], &mut d_bitmask)?;
+    let d_bitmask = &d_bitmask[0];
+    for (src, dst) in variables_hint
+        .iter()
+        .zip(d_variables_transformed.chunks_mut(domain_size))
+    {
+        assert_eq!(src.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
+        let (actual, padding) = dst.split_at_mut(src.len());
+        mem::h2d(src, actual)?;
+        // don't forget to mark padding space as placeholder
+        if padding.is_empty() == false {
+            helpers::set_value_generic(padding, &d_bitmask)?;
         }
     }
-
     let d_non_residues = materialize_non_residues(num_cols, domain_size)?;
 
     assert_eq!(d_result.len(), num_cells);
@@ -272,22 +328,4 @@ pub fn materialize_permutation_cols_from_transformed_hints_into<'a, A: GoodAlloc
     )?;
 
     Ok(())
-}
-
-pub fn is_adjacent<T, A: GoodAllocator>(data: &[Vec<T, A>]) -> bool {
-    assert!(!data.is_empty());
-    let mut prev_ptr = data[0].as_ptr();
-    let mut prev_len = data[0].len();
-    for item in data[1..].iter() {
-        unsafe {
-            if std::ptr::eq(prev_ptr.add(prev_len), item.as_ptr()) == false {
-                return false;
-            }
-        }
-
-        prev_ptr = item.as_ptr();
-        prev_len = item.len();
-    }
-    dbg!("columns are adjacent");
-    true
 }

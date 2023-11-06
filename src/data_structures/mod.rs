@@ -15,11 +15,20 @@ pub use arguments::*;
 mod tree;
 pub use tree::*;
 
+use boojum::cs::traits::GoodAllocator;
+use boojum_cuda::device_structures::{DeviceMatrix, DeviceMatrixMut};
+use cudart::{event::CudaEventCreateFlags, slice::DeviceSlice};
+
 pub trait AsSingleSlice {
     fn domain_size(&self) -> usize;
     fn num_polys(&self) -> usize;
     fn as_single_slice(&self) -> &[F];
-    fn as_single_slice_mut(&mut self) -> &mut [F];
+    fn as_single_slice_mut(&mut self) -> &mut [F] {
+        unreachable!()
+    }
+    fn len(&self) -> usize {
+        self.as_single_slice().len()
+    }
 }
 
 pub(crate) fn coset_cap_size(cap_size: usize, lde_degree: usize) -> usize {

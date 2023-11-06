@@ -6,14 +6,14 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# boojum = { path = "../era-boojum" }
-# boojum-cuda = { path = "../era-boojum-cuda/boojum-cuda" }
+# boojum = { path = "../era-boojum", package = "boojum" }
+# boojum-cuda = { path = "../era-boojum-cuda/boojum-cuda", package = "boojum-cuda" }
 # cudart = { path = "../era-boojum-cuda/cudart", package = "cudart" }
 # circuit_definitions = { path = "../era-zkevm_test_harness/circuit_definitions", package = "circuit_definitions", optional = true }
 
 boojum = {git = "https://github.com/matter-labs/era-boojum", branch = "main"}
-boojum-cuda = {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main", package = "boojum-cuda"}
-cudart= {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main", package = "cudart"}
+boojum-cuda = {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "tmp", package = "boojum-cuda"}
+cudart= {git = "https://github.com/matter-labs/era-boojum-cuda", branch = "tmp", package = "cudart"}
 circuit_definitions = {git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.4.0", package = "circuit_definitions", optional = true}
 
 rand = "0.8"

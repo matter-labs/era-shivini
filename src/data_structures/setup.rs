@@ -1,7 +1,6 @@
 use boojum::cs::{
     implementations::{polynomial_storage::SetupBaseStorage, proof::OracleQuery},
     oracle::TreeHasher,
-    traits::GoodAllocator,
 };
 
 use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
@@ -93,7 +92,7 @@ impl<P: PolyForm> GenericSetupStorage<P> {
             table_cols.push(all_polys_iter.next().unwrap());
         }
         assert!(all_polys_iter.next().is_none());
-        assert_multiset_adjacent(&[&permutation_cols, &constant_cols, &table_cols]);
+        assert_multiset_adjacent_base(&[&permutation_cols, &constant_cols, &table_cols]);
 
         SetupPolynomials {
             permutation_cols,
@@ -138,6 +137,20 @@ impl<P: PolyForm> AsSingleSlice for GenericSetupStorage<P> {
 
     fn as_single_slice_mut(&mut self) -> &mut [F] {
         self.storage.as_single_slice_mut()
+    }
+
+    fn domain_size(&self) -> usize {
+        self.storage.domain_size
+    }
+
+    fn num_polys(&self) -> usize {
+        assert_eq!(self.storage.num_polys, self.layout.num_polys());
+        self.layout.num_polys()
+    }
+}
+impl<P: PolyForm> AsSingleSlice for &GenericSetupStorage<P> {
+    fn as_single_slice(&self) -> &[F] {
+        self.storage.as_single_slice()
     }
 
     fn domain_size(&self) -> usize {
@@ -203,9 +216,6 @@ impl GenericSetupStorage<LagrangeBasis> {
         for col in constant_columns.iter().chain(lookup_tables_columns.iter()) {
             assert_eq!(col.len(), domain_size);
         }
-        for col in variables_hint.iter() {
-            assert_eq!(col.len(), domain_size);
-        }
 
         let num_copy_permutation_polys = variables_hint.len();
         let mut storage = GenericSetupStorage::allocate(layout.clone(), domain_size)?;
@@ -221,6 +231,7 @@ impl GenericSetupStorage<LagrangeBasis> {
         materialize_permutation_cols_from_transformed_hints_into(
             copy_permutation_storage,
             variables_hint,
+            domain_size,
         )?;
 
         for (dst, src) in remaining_polys
@@ -233,7 +244,6 @@ impl GenericSetupStorage<LagrangeBasis> {
         Ok(storage)
     }
 
-    #[cfg(test)]
     pub fn from_host_values<
         PP: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     >(
@@ -264,7 +274,6 @@ impl GenericSetupStorage<LagrangeBasis> {
             .collect();
         let domain_size = permutation_cols[0].len();
 
-        let _num_polys = permutation_cols.len() + constant_cols.len() + table_cols.len();
         let setup_layout = SetupLayout::from_base_setup_and_hints(base_setup);
         let mut storage = GenericSetupStorage::allocate(setup_layout, domain_size)?;
 
@@ -345,10 +354,10 @@ impl GenericSetupStorage<CosetEvaluations> {
         Ok((subtree, subtree_root))
     }
 
-    pub(crate) fn barycentric_evaluate(
+    pub(crate) fn barycentric_evaluate<A: GoodAllocator>(
         &self,
         bases: &PrecomputedBasisForBarycentric,
-    ) -> CudaResult<Vec<EF>> {
+    ) -> CudaResult<Vec<EF, A>> {
         batch_barycentric_evaluate_base(self, bases, self.domain_size(), self.num_polys())
     }
 }
@@ -398,7 +407,6 @@ impl SetupCache {
         cap_size: usize,
     ) -> CudaResult<(Vec<SubTree>, Vec<[F; 4]>)> {
         let fri_lde_degree = self.fri_lde_degree;
-        let _used_lde_degree = self.used_lde_degree;
         let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
         let mut setup_subtrees = vec![];
         let mut setup_subtree_caps = vec![];
@@ -430,7 +438,6 @@ impl SetupCache {
         }
 
         if self.cosets[coset_idx].is_none() {
-            let _num_polys = self.monomials.num_polys();
             let domain_size = self.monomials.domain_size();
 
             let mut current_storage =
@@ -463,5 +470,35 @@ impl SetupCache {
             row_idx,
             domain_size,
         )
+    }
+
+    pub fn batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
+        &mut self,
+        coset_idx: usize,
+        indexes: &DVec<u32, SmallStaticDeviceAllocator>,
+        num_queries: usize,
+        domain_size: usize,
+        h_all_leaf_elems: &mut Vec<F, A>,
+        h_all_proofs: &mut Vec<F, A>,
+        tree_holder: &TreeCache,
+    ) -> CudaResult<()> {
+        let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
+        let oracle_data = tree_holder.get_setup_subtree(coset_idx);
+        batch_query::<H, A>(
+            indexes,
+            num_queries,
+            leaf_sources,
+            leaf_sources.num_polys(),
+            oracle_data,
+            oracle_data.cap_size,
+            domain_size,
+            1,
+            h_all_leaf_elems,
+            h_all_proofs,
+        )
+    }
+
+    pub fn layout(&self) -> SetupLayout {
+        self.monomials.layout.clone()
     }
 }
