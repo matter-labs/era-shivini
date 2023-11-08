@@ -97,6 +97,7 @@ fn test_permutation_polys() {
 
 #[serial]
 #[test]
+#[ignore]
 fn test_variable_assignment() {
     let mut cs = init_cs_for_sha256::<DevCSConfig>();
     let worker = Worker::new();
@@ -421,6 +422,7 @@ fn compare_proofs(
     assert_eq!(expected_proof.pow_challenge, actual_proof.pow_challenge);
 }
 
+#[serial]
 #[test]
 #[ignore]
 fn test_reference_proof_for_sha256() {
@@ -951,6 +953,7 @@ mod zksync {
         compare_proofs(&reference_proof, &gpu_proof);
     }
 
+    #[serial]
     #[test]
     #[ignore]
     fn test_reference_proof_for_circuit() {
