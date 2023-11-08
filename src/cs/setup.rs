@@ -1,22 +1,18 @@
 use boojum::{
-    config::{CSConfig, CSSetupConfig},
     cs::{
         implementations::{
-            fast_serialization::MemcopySerializable,
             hints::{DenseVariablesCopyHint, DenseWitnessCopyHint},
             polynomial_storage::SetupBaseStorage,
-            reference_cs::CSReferenceAssembly,
             setup::TreeNode,
             utils::make_non_residues,
         },
         oracle::merkle_tree::MerkleTreeWithCap,
-        Place, Variable, Witness,
+        Variable, Witness,
     },
-    field::U64Representable,
     worker::Worker,
 };
 use boojum_cuda::ops_complex::pack_variable_indexes;
-use cudart::slice::{CudaSlice, CudaSliceMut, DeviceSlice};
+use cudart::slice::{CudaSlice, DeviceSlice};
 
 use super::*;
 pub(crate) const PACKED_PLACEHOLDER_BITMASK: u32 = 1 << 31;
@@ -200,7 +196,7 @@ impl<A: GoodAllocator> GpuSetup<A> {
             variables_hint.maps.len(),
             base_setup.copy_permutation_polys.len()
         );
-        let domain_size = base_setup.copy_permutation_polys[0].domain_size();
+        let _domain_size = base_setup.copy_permutation_polys[0].domain_size();
         let layout = SetupLayout::from_base_setup_and_hints(&base_setup);
 
         let SetupBaseStorage {

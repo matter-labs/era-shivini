@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-
 use boojum::{
     cs::{
         implementations::{
@@ -16,9 +14,8 @@ use boojum::{
 };
 
 use crate::{
-    cs::{variable_assignment, GpuSetup, PACKED_PLACEHOLDER_BITMASK},
+    cs::{variable_assignment, GpuSetup},
     primitives::tree::POSEIDON_RATE,
-    prover::compute_quotient_degree,
 };
 
 use super::*;
@@ -41,6 +38,7 @@ impl TraceLayout {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new(
         num_variable_cols: usize,
         num_witness_cols: usize,
@@ -402,7 +400,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
     let mut second_coset_storage = GenericStorage::allocate(num_polys, domain_size)?;
 
     let inner_h2d_stream = CudaStream::create()?;
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
 
     let mut first_subtree_all_nodes = dvec!(2 * NUM_EL_PER_HASH * domain_size);
     let (first_subtree_leaf_hashes, first_subtree_layer_nodes) =
@@ -533,6 +531,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
 }
 
 impl GenericTraceStorage<LagrangeBasis> {
+    #[allow(dead_code)]
     pub fn into_monomials(&self) -> CudaResult<GenericTraceStorage<MonomialBasis>> {
         let trace_layout = self.layout.clone();
         let num_polys = trace_layout.num_polys();
@@ -724,6 +723,7 @@ impl TraceCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn commit<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         cap_size: usize,
@@ -776,6 +776,7 @@ impl TraceCache {
         return Ok(self.cosets[coset_idx].as_ref().unwrap());
     }
 
+    #[allow(dead_code)]
     pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         coset_idx: usize,
@@ -824,6 +825,7 @@ impl TraceCache {
         self.monomials.num_polys()
     }
 
+    #[allow(dead_code)]
     pub fn layout(&self) -> TraceLayout {
         self.monomials.layout.clone()
     }

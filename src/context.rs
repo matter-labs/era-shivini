@@ -7,14 +7,14 @@ pub const ZKSYNC_DEFAULT_TRACE_LOG_LENGTH: usize = 19;
 impl ProverContext {
     pub fn create() -> CudaResult<Self> {
         unsafe {
-            assert!(_cuda_context.is_none());
+            assert!(_CUDA_CONTEXT.is_none());
             assert!(_DEVICE_ALLOCATOR.is_none());
             assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
             assert!(_HOST_ALLOCATOR.is_none());
             assert!(_SMALL_HOST_ALLOCATOR.is_none());
-            assert!(_exec_stream.is_none());
-            assert!(_h2d_stream.is_none());
-            assert!(_d2h_stream.is_none());
+            assert!(_EXEC_STREAM.is_none());
+            assert!(_H2D_STREAM.is_none());
+            assert!(_D2H_STREAM.is_none());
         }
         // size counts in field elements
         let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
@@ -28,29 +28,30 @@ impl ProverContext {
         let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _cuda_context = Some(cuda_ctx);
+            _CUDA_CONTEXT = Some(cuda_ctx);
             _DEVICE_ALLOCATOR = Some(device_alloc);
             _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
             _HOST_ALLOCATOR = Some(host_alloc);
             _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
-            _exec_stream = Some(Stream::create()?);
-            _h2d_stream = Some(Stream::create()?);
-            _d2h_stream = Some(Stream::create()?);
+            _EXEC_STREAM = Some(Stream::create()?);
+            _H2D_STREAM = Some(Stream::create()?);
+            _D2H_STREAM = Some(Stream::create()?);
         }
 
         Ok(Self {})
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_14gb_dev(block_size: usize) -> CudaResult<Self> {
         unsafe {
-            assert!(_cuda_context.is_none());
+            assert!(_CUDA_CONTEXT.is_none());
             assert!(_DEVICE_ALLOCATOR.is_none());
             assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
             assert!(_HOST_ALLOCATOR.is_none());
             assert!(_SMALL_HOST_ALLOCATOR.is_none());
-            assert!(_exec_stream.is_none());
-            assert!(_h2d_stream.is_none());
-            assert!(_d2h_stream.is_none());
+            assert!(_EXEC_STREAM.is_none());
+            assert!(_H2D_STREAM.is_none());
+            assert!(_D2H_STREAM.is_none());
         }
         // size counts in field elements
         let cuda_ctx = CudaContext::create(12, 12)?;
@@ -63,14 +64,14 @@ impl ProverContext {
         let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _cuda_context = Some(cuda_ctx);
+            _CUDA_CONTEXT = Some(cuda_ctx);
             _DEVICE_ALLOCATOR = Some(device_alloc);
             _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
             _HOST_ALLOCATOR = Some(host_alloc);
             _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
-            _exec_stream = Some(Stream::create()?);
-            _h2d_stream = Some(Stream::create()?);
-            _d2h_stream = Some(Stream::create()?);
+            _EXEC_STREAM = Some(Stream::create()?);
+            _H2D_STREAM = Some(Stream::create()?);
+            _D2H_STREAM = Some(Stream::create()?);
         }
 
         Ok(Self {})
@@ -78,14 +79,14 @@ impl ProverContext {
 
     pub fn create_14gb() -> CudaResult<Self> {
         unsafe {
-            assert!(_cuda_context.is_none());
+            assert!(_CUDA_CONTEXT.is_none());
             assert!(_DEVICE_ALLOCATOR.is_none());
             assert!(_SMALL_DEVICE_ALLOCATOR.is_none());
             assert!(_HOST_ALLOCATOR.is_none());
             assert!(_SMALL_HOST_ALLOCATOR.is_none());
-            assert!(_exec_stream.is_none());
-            assert!(_h2d_stream.is_none());
-            assert!(_d2h_stream.is_none());
+            assert!(_EXEC_STREAM.is_none());
+            assert!(_H2D_STREAM.is_none());
+            assert!(_D2H_STREAM.is_none());
         }
         // size counts in field elements
         let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
@@ -99,19 +100,20 @@ impl ProverContext {
         let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _cuda_context = Some(cuda_ctx);
+            _CUDA_CONTEXT = Some(cuda_ctx);
             _DEVICE_ALLOCATOR = Some(device_alloc);
             _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
             _HOST_ALLOCATOR = Some(host_alloc);
             _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
-            _exec_stream = Some(Stream::create()?);
-            _h2d_stream = Some(Stream::create()?);
-            _d2h_stream = Some(Stream::create()?);
+            _EXEC_STREAM = Some(Stream::create()?);
+            _H2D_STREAM = Some(Stream::create()?);
+            _D2H_STREAM = Some(Stream::create()?);
         }
 
         Ok(Self {})
     }
 
+    #[allow(dead_code)]
     pub(crate) fn dev(domain_size: usize) -> CudaResult<Self> {
         assert!(domain_size.is_power_of_two());
         // size counts in field elements
@@ -125,14 +127,14 @@ impl ProverContext {
         let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
 
         unsafe {
-            _cuda_context = Some(cuda_ctx);
+            _CUDA_CONTEXT = Some(cuda_ctx);
             _DEVICE_ALLOCATOR = Some(device_alloc);
             _SMALL_DEVICE_ALLOCATOR = Some(small_device_alloc);
             _HOST_ALLOCATOR = Some(host_alloc);
             _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
-            _exec_stream = Some(Stream::create()?);
-            _h2d_stream = Some(Stream::create()?);
-            _d2h_stream = Some(Stream::create()?);
+            _EXEC_STREAM = Some(Stream::create()?);
+            _H2D_STREAM = Some(Stream::create()?);
+            _D2H_STREAM = Some(Stream::create()?);
         }
 
         Ok(Self {})
@@ -142,7 +144,7 @@ impl ProverContext {
 impl Drop for ProverContext {
     fn drop(&mut self) {
         unsafe {
-            let cuda_ctx = _cuda_context.take().expect("cuda ctx");
+            let cuda_ctx = _CUDA_CONTEXT.take().expect("cuda ctx");
             cuda_ctx.destroy().expect("destroy cuda ctx");
 
             _DEVICE_ALLOCATOR
@@ -165,19 +167,19 @@ impl Drop for ProverContext {
                 .unwrap()
                 .free()
                 .expect("free small allocator");
-            _exec_stream
+            _EXEC_STREAM
                 .take()
                 .unwrap()
                 .inner
                 .destroy()
                 .expect("destroy stream");
-            _h2d_stream
+            _H2D_STREAM
                 .take()
                 .unwrap()
                 .inner
                 .destroy()
                 .expect("destroy h2d stream");
-            _d2h_stream
+            _D2H_STREAM
                 .take()
                 .unwrap()
                 .inner
@@ -187,22 +189,22 @@ impl Drop for ProverContext {
     }
 }
 
-pub(crate) static mut _cuda_context: Option<CudaContext> = None;
-pub(crate) static mut _exec_stream: Option<Stream> = None;
-pub(crate) static mut _h2d_stream: Option<Stream> = None;
-pub(crate) static mut _d2h_stream: Option<Stream> = None;
+pub(crate) static mut _CUDA_CONTEXT: Option<CudaContext> = None;
+pub(crate) static mut _EXEC_STREAM: Option<Stream> = None;
+pub(crate) static mut _H2D_STREAM: Option<Stream> = None;
+pub(crate) static mut _D2H_STREAM: Option<Stream> = None;
 
 pub(crate) fn get_stream() -> &'static CudaStream {
-    unsafe { &_exec_stream.as_ref().expect("execution stream").inner }
+    unsafe { &_EXEC_STREAM.as_ref().expect("execution stream").inner }
 }
 
 pub(crate) fn get_h2d_stream() -> &'static CudaStream {
-    // unsafe { &_h2d_stream.as_ref().expect("host to device stream").inner }
+    // unsafe { &_H2D_STREAM.as_ref().expect("host to device stream").inner }
     get_stream()
 }
 
 pub(crate) fn get_d2h_stream() -> &'static CudaStream {
-    // unsafe { &_d2h_stream.as_ref().expect("device to host stream").inner }
+    // unsafe { &_D2H_STREAM.as_ref().expect("device to host stream").inner }
     get_stream()
 }
 

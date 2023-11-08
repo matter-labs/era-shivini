@@ -1,13 +1,6 @@
 use std::rc::Rc;
 
-use crate::primitives::ntt::{batch_bitreverse, batch_ntt, coset_fft_into};
-use boojum::{
-    cs::{
-        implementations::{proof::OracleQuery, transcript::Transcript},
-        oracle::TreeHasher,
-    },
-    field::U64Representable,
-};
+use boojum::cs::{implementations::proof::OracleQuery, oracle::TreeHasher};
 
 use super::*;
 
@@ -405,220 +398,90 @@ pub fn batch_query_leaf_sources<A: GoodAllocator>(
     Ok(())
 }
 
-#[test]
-fn test_batch_query_for_leaf_sources() -> CudaResult<()> {
-    let _ctx = ProverContext::create_14gb()?;
-    let domain_size = 1 << 16;
-    let lde_degree = 2;
-    let num_cols = 2;
-    let num_queries = 1 << 10;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitives::ntt::{batch_bitreverse, batch_ntt, coset_fft_into};
+    use boojum::cs::implementations::transcript::Transcript;
+    use boojum::field::U64Representable;
+    use serial_test::serial;
 
-    for log_n in 0..4 {
-        let num_elems_per_leaf = 1 << log_n;
-        print!("running for num elems per leaf {}", num_elems_per_leaf);
-        run_batch_query_for_leaf_sources(
-            domain_size,
-            lde_degree,
-            num_cols,
-            num_queries,
-            num_elems_per_leaf,
-        )?;
-        println!(" [DONE]");
-    }
+    #[serial]
+    #[test]
+    #[ignore]
+    fn test_batch_query_for_leaf_sources() -> CudaResult<()> {
+        let _ctx = ProverContext::create_14gb()?;
+        let domain_size = 1 << 16;
+        let lde_degree = 2;
+        let num_cols = 2;
+        let num_queries = 1 << 10;
 
-    Ok(())
-}
-
-fn run_batch_query_for_leaf_sources(
-    domain_size: usize,
-    lde_degree: usize,
-    num_cols: usize,
-    num_queries: usize,
-    num_elems_per_leaf: usize,
-) -> CudaResult<()> {
-    use crate::prover::construct_single_query_for_leaf_source_from_batch_sources;
-    use rand::{Rng, SeedableRng};
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42u64);
-
-    assert!(domain_size >= num_queries);
-
-    let mut storage = vec![];
-    for _ in 0..num_cols * lde_degree {
-        for idx in 0..domain_size {
-            storage.push(F::from_u64_unchecked(idx as u64));
-        }
-    }
-
-    let d_storage = DVec::from_vec(storage)?;
-    let codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
-    assert!(domain_size <= (u32::MAX as usize));
-    let mut all_indexes = Vec::with_capacity(lde_degree);
-    for _ in 0..lde_degree {
-        let indexes: Vec<_> = (0..num_queries)
-            .map(|_| rng.gen::<u32>() % domain_size as u32)
-            .collect();
-        assert_eq!(indexes.len(), num_queries);
-        all_indexes.push(indexes);
-    }
-
-    for coset_idx in 0..lde_degree {
-        let mut h_all_leaf_elems_expected =
-            Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
-        let mut h_all_leaf_elems_actual =
-            Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
-        let coset_indexes = &all_indexes[coset_idx];
-        for query_idx in coset_indexes.iter() {
-            let expected_query = codeword.get_leaf_sources(
-                coset_idx,
+        for log_n in 0..4 {
+            let num_elems_per_leaf = 1 << log_n;
+            print!("running for num elems per leaf {}", num_elems_per_leaf);
+            run_batch_query_for_leaf_sources(
                 domain_size,
                 lde_degree,
-                *query_idx as usize,
-                num_elems_per_leaf,
-            )?;
-            h_all_leaf_elems_expected.extend_from_slice(&expected_query);
-        }
-
-        let effective_indexes: Vec<_> =
-            compute_effective_indexes(coset_indexes, coset_idx, domain_size, num_elems_per_leaf);
-        let mut d_effective_indexes = svec!(effective_indexes.len());
-        mem::h2d(&effective_indexes, &mut d_effective_indexes)?;
-
-        let num_queries = coset_indexes.len();
-        batch_query_leaf_sources(
-            &d_effective_indexes,
-            num_queries,
-            &codeword,
-            num_cols,
-            domain_size * lde_degree,
-            num_elems_per_leaf,
-            &mut h_all_leaf_elems_actual,
-        )?;
-
-        for (query_idx, expected_chunk) in h_all_leaf_elems_expected
-            .chunks(num_elems_per_leaf * num_cols)
-            .enumerate()
-        {
-            let (expected_c0, expected_c1) = expected_chunk.split_at(num_elems_per_leaf);
-            let (actual_c0_batch, actual_c1_batch) =
-                h_all_leaf_elems_actual.split_at(num_queries * num_elems_per_leaf);
-            let start = query_idx * num_elems_per_leaf;
-            let end = start + num_elems_per_leaf;
-            assert_eq!(expected_c0, &actual_c0_batch[start..end]);
-            assert_eq!(expected_c1, &actual_c1_batch[start..end]);
-        }
-
-        for (query_idx, expected_chunk) in h_all_leaf_elems_expected
-            .chunks(num_elems_per_leaf * num_cols)
-            .enumerate()
-        {
-            let leaf_elems = construct_single_query_for_leaf_source_from_batch_sources(
-                &h_all_leaf_elems_actual,
-                num_queries,
-                query_idx,
                 num_cols,
+                num_queries,
                 num_elems_per_leaf,
-            );
-            assert_eq!(expected_chunk.len(), leaf_elems.len());
-            assert_eq!(expected_chunk, &leaf_elems);
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn test_batch_query_for_fri_layers() -> CudaResult<()> {
-    let _ctx = ProverContext::create_14gb()?;
-    let domain_size = 1 << 16;
-    let lde_degree = 2;
-    let num_cols = 2;
-    let num_queries = 1 << 10;
-    let cap_size = 4;
-
-    run_batch_query_for_fri_layers(domain_size, lde_degree, num_cols, num_queries, cap_size)?;
-
-    Ok(())
-}
-
-fn run_batch_query_for_fri_layers(
-    domain_size: usize,
-    lde_degree: usize,
-    num_cols: usize,
-    num_queries: usize,
-    cap_size: usize,
-) -> CudaResult<()> {
-    use crate::prover::construct_single_query_for_leaf_source_from_batch_sources;
-    use boojum::worker::Worker;
-    use rand::{Rng, SeedableRng};
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42u64);
-
-    assert!(domain_size >= num_queries);
-
-    let h_values = (0..num_cols * domain_size)
-        .map(|idx| F::from_u64_unchecked(idx as u64))
-        .collect::<Vec<_>>();
-    let mut d_values = DVec::from_vec(h_values)?;
-    let mut d_storage = dvec!(d_values.len() * lde_degree);
-    batch_ntt(&mut d_values, false, true, domain_size, num_cols)?;
-    batch_bitreverse(&mut d_values, domain_size)?;
-    for (v, s) in d_values
-        .chunks(domain_size)
-        .zip(d_storage.chunks_mut(domain_size * lde_degree))
-    {
-        for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
-            coset_fft_into(
-                v,
-                c,
-                bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),
-                lde_degree,
             )?;
+            println!(" [DONE]");
         }
+
+        Ok(())
     }
-    let base_codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
-    let folding_schedule = vec![2, 2, 1];
 
-    let (fri_holder, _) = compute_fri::<_, Global>(
-        base_codeword.clone(),
-        &mut DefaultTranscript::new(()),
-        folding_schedule.clone(),
-        lde_degree,
-        cap_size,
-        &Worker::new(),
-    )?;
+    fn run_batch_query_for_leaf_sources(
+        domain_size: usize,
+        lde_degree: usize,
+        num_cols: usize,
+        num_queries: usize,
+        num_elems_per_leaf: usize,
+    ) -> CudaResult<()> {
+        use crate::prover::construct_single_query_for_leaf_source_from_batch_sources;
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42u64);
 
-    assert!(domain_size <= (u32::MAX as usize));
-    let mut all_indexes = Vec::with_capacity(lde_degree);
-    for _ in 0..lde_degree {
-        let indexes: Vec<_> = (0..num_queries)
-            .map(|_| rng.gen::<u32>() % domain_size as u32)
-            .collect();
-        assert_eq!(indexes.len(), num_queries);
-        all_indexes.push(indexes);
-    }
-    let mut original_indexes = all_indexes.to_vec();
-    let mut domain_size = domain_size;
+        assert!(domain_size >= num_queries);
 
-    for (layer_idx, (codeword, oracle)) in fri_holder.flatten().into_iter().enumerate() {
-        dbg!(layer_idx);
-        let num_elems_per_leaf = oracle.num_elems_per_leaf;
-        assert_eq!(1 << folding_schedule[layer_idx], num_elems_per_leaf);
+        let mut storage = vec![];
+        for _ in 0..num_cols * lde_degree {
+            for idx in 0..domain_size {
+                storage.push(F::from_u64_unchecked(idx as u64));
+            }
+        }
+
+        let d_storage = DVec::from_vec(storage)?;
+        let codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
+        assert!(domain_size <= (u32::MAX as usize));
+        let mut all_indexes = Vec::with_capacity(lde_degree);
+        for _ in 0..lde_degree {
+            let indexes: Vec<_> = (0..num_queries)
+                .map(|_| rng.gen::<u32>() % domain_size as u32)
+                .collect();
+            assert_eq!(indexes.len(), num_queries);
+            all_indexes.push(indexes);
+        }
+
         for coset_idx in 0..lde_degree {
             let mut h_all_leaf_elems_expected =
                 Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
             let mut h_all_leaf_elems_actual =
                 Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
-            let coset_indexes = &original_indexes[coset_idx];
-            for query_idx in coset_indexes.iter().cloned() {
+            let coset_indexes = &all_indexes[coset_idx];
+            for query_idx in coset_indexes.iter() {
                 let expected_query = codeword.get_leaf_sources(
                     coset_idx,
                     domain_size,
                     lde_degree,
-                    query_idx as usize,
+                    *query_idx as usize,
                     num_elems_per_leaf,
                 )?;
                 h_all_leaf_elems_expected.extend_from_slice(&expected_query);
             }
 
-            let effective_indexes = compute_effective_indexes(
+            let effective_indexes: Vec<_> = compute_effective_indexes(
                 coset_indexes,
                 coset_idx,
                 domain_size,
@@ -631,7 +494,7 @@ fn run_batch_query_for_fri_layers(
             batch_query_leaf_sources(
                 &d_effective_indexes,
                 num_queries,
-                codeword,
+                &codeword,
                 num_cols,
                 domain_size * lde_degree,
                 num_elems_per_leaf,
@@ -639,7 +502,7 @@ fn run_batch_query_for_fri_layers(
             )?;
 
             for (query_idx, expected_chunk) in h_all_leaf_elems_expected
-                .chunks(num_elems_per_leaf * lde_degree)
+                .chunks(num_elems_per_leaf * num_cols)
                 .enumerate()
             {
                 let (expected_c0, expected_c1) = expected_chunk.split_at(num_elems_per_leaf);
@@ -647,8 +510,8 @@ fn run_batch_query_for_fri_layers(
                     h_all_leaf_elems_actual.split_at(num_queries * num_elems_per_leaf);
                 let start = query_idx * num_elems_per_leaf;
                 let end = start + num_elems_per_leaf;
-                assert_eq!(&expected_c0[..], &actual_c0_batch[start..end]);
-                assert_eq!(&expected_c1[..], &actual_c1_batch[start..end]);
+                assert_eq!(expected_c0, &actual_c0_batch[start..end]);
+                assert_eq!(expected_c1, &actual_c1_batch[start..end]);
             }
 
             for (query_idx, expected_chunk) in h_all_leaf_elems_expected
@@ -666,179 +529,328 @@ fn run_batch_query_for_fri_layers(
                 assert_eq!(expected_chunk, &leaf_elems);
             }
         }
-
-        let log2_schedule = num_elems_per_leaf.trailing_zeros() as usize;
-        domain_size >>= log2_schedule;
-        for indexes in original_indexes.iter_mut() {
-            for index in indexes.iter_mut() {
-                *index >>= log2_schedule;
-            }
-        }
+        Ok(())
     }
 
-    Ok(())
-}
+    #[serial]
+    #[test]
+    #[ignore]
+    fn test_batch_query_for_fri_layers() -> CudaResult<()> {
+        let _ctx = ProverContext::create_14gb()?;
+        let domain_size = 1 << 16;
+        let lde_degree = 2;
+        let num_cols = 2;
+        let num_queries = 1 << 10;
+        let cap_size = 4;
 
-#[test]
-fn test_batch_query_for_merkle_paths() -> CudaResult<()> {
-    let _ctx = ProverContext::create_14gb()?;
-    let domain_size = 1 << 4;
-    let lde_degree = 2;
-    let num_cols = 2;
-    let num_queries = 1 << 1;
-    let cap_size = 2;
+        run_batch_query_for_fri_layers(domain_size, lde_degree, num_cols, num_queries, cap_size)?;
 
-    run_batch_query_for_merkle_paths(domain_size, lde_degree, num_cols, num_queries, cap_size)?;
-
-    Ok(())
-}
-
-fn run_batch_query_for_merkle_paths(
-    domain_size: usize,
-    lde_degree: usize,
-    num_cols: usize,
-    num_queries: usize,
-    cap_size: usize,
-) -> CudaResult<()> {
-    use crate::prover::construct_single_query_for_merkle_path_from_batch_sources;
-    use boojum::worker::Worker;
-    use rand::{Rng, SeedableRng};
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42 as u64);
-
-    assert!(domain_size >= num_queries);
-
-    let h_values = (0..num_cols * domain_size)
-        .map(|idx| F::from_u64_unchecked(idx as u64))
-        .collect::<Vec<_>>();
-    let mut d_values = DVec::from_vec(h_values)?;
-    let mut d_storage = dvec!(d_values.len() * lde_degree);
-    batch_ntt(&mut d_values, false, true, domain_size, num_cols)?;
-    batch_bitreverse(&mut d_values, domain_size)?;
-    for (v, s) in d_values
-        .chunks(domain_size)
-        .zip(d_storage.chunks_mut(domain_size * lde_degree))
-    {
-        for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
-            coset_fft_into(
-                v,
-                c,
-                bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),
-                lde_degree,
-            )?;
-        }
+        Ok(())
     }
-    let base_codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
-    let folding_schedule = vec![1, 1];
 
-    let (fri_holder, _) = compute_fri::<_, Global>(
-        base_codeword.clone(),
-        &mut DefaultTranscript::new(()),
-        folding_schedule.clone(),
-        lde_degree,
-        cap_size,
-        &Worker::new(),
-    )?;
+    fn run_batch_query_for_fri_layers(
+        domain_size: usize,
+        lde_degree: usize,
+        num_cols: usize,
+        num_queries: usize,
+        cap_size: usize,
+    ) -> CudaResult<()> {
+        use crate::prover::construct_single_query_for_leaf_source_from_batch_sources;
+        use boojum::worker::Worker;
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42u64);
 
-    assert!(domain_size <= (u32::MAX as usize));
-    let mut all_indexes = Vec::with_capacity(lde_degree);
-    for _ in 0..lde_degree {
-        let indexes: Vec<_> = (0..num_queries)
-            .map(|_| rng.gen::<u32>() % domain_size as u32)
-            .collect();
-        assert_eq!(indexes.len(), num_queries);
-        all_indexes.push(indexes);
-    }
-    let mut domain_size = domain_size;
+        assert!(domain_size >= num_queries);
 
-    for (layer_idx, (codeword, oracle)) in fri_holder.flatten().into_iter().enumerate() {
-        dbg!(layer_idx);
-        let num_elems_per_leaf = oracle.num_elems_per_leaf;
-        assert_eq!(1 << folding_schedule[layer_idx], num_elems_per_leaf);
-        assert_eq!(lde_degree * domain_size, codeword.length());
-        let num_leafs = lde_degree * domain_size / num_elems_per_leaf;
-        assert_eq!(num_leafs, oracle.num_leafs);
-        let num_layers = num_leafs.trailing_zeros() as usize;
-        let layers_to_skip = cap_size.trailing_zeros() as usize;
-        let num_actual_layers = num_layers - layers_to_skip;
-        for coset_idx in 0..lde_degree {
-            let mut h_all_proof_elems_expected =
-                Vec::with_capacity(num_actual_layers * num_queries);
-            let mut h_all_proof_elems_actual =
-                Vec::with_capacity(num_actual_layers * num_queries * NUM_EL_PER_HASH);
-            let coset_indexes = &all_indexes[coset_idx];
-            assert_eq!(num_queries, coset_indexes.len());
-            for query_idx in coset_indexes.iter().cloned() {
-                let expected_query = oracle.query::<DefaultTreeHasher, _>(
-                    codeword,
-                    coset_idx,
+        let h_values = (0..num_cols * domain_size)
+            .map(|idx| F::from_u64_unchecked(idx as u64))
+            .collect::<Vec<_>>();
+        let mut d_values = DVec::from_vec(h_values)?;
+        let mut d_storage = dvec!(d_values.len() * lde_degree);
+        batch_ntt(&mut d_values, false, true, domain_size, num_cols)?;
+        batch_bitreverse(&mut d_values, domain_size)?;
+        for (v, s) in d_values
+            .chunks(domain_size)
+            .zip(d_storage.chunks_mut(domain_size * lde_degree))
+        {
+            for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
+                coset_fft_into(
+                    v,
+                    c,
+                    bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),
                     lde_degree,
-                    query_idx as usize,
-                    domain_size,
                 )?;
-                dbg!(query_idx);
-                dbg!(&expected_query.proof);
-                h_all_proof_elems_expected.extend_from_slice(&expected_query.proof);
             }
-            assert_eq!(
-                h_all_proof_elems_expected.len(),
-                h_all_proof_elems_expected.capacity()
-            );
+        }
+        let base_codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
+        let folding_schedule = vec![2, 2, 1];
 
-            let effective_indexes = compute_effective_indexes(
-                coset_indexes,
-                coset_idx,
-                domain_size,
-                num_elems_per_leaf,
-            );
-            dbg!(&effective_indexes);
-            let mut d_effective_indexes = svec!(effective_indexes.len());
-            mem::h2d(&effective_indexes, &mut d_effective_indexes)?;
+        let (fri_holder, _) = compute_fri::<_, Global>(
+            base_codeword.clone(),
+            &mut DefaultTranscript::new(()),
+            folding_schedule.clone(),
+            lde_degree,
+            cap_size,
+            &Worker::new(),
+        )?;
 
-            batch_query_tree::<DefaultTreeHasher, _>(
-                &d_effective_indexes,
-                num_queries,
-                oracle,
-                cap_size,
-                domain_size * lde_degree,
-                num_elems_per_leaf,
-                &mut h_all_proof_elems_actual,
-            )?;
+        assert!(domain_size <= (u32::MAX as usize));
+        let mut all_indexes = Vec::with_capacity(lde_degree);
+        for _ in 0..lde_degree {
+            let indexes: Vec<_> = (0..num_queries)
+                .map(|_| rng.gen::<u32>() % domain_size as u32)
+                .collect();
+            assert_eq!(indexes.len(), num_queries);
+            all_indexes.push(indexes);
+        }
+        let mut original_indexes = all_indexes.to_vec();
+        let mut domain_size = domain_size;
 
-            assert_eq!(
-                h_all_proof_elems_actual.len(),
-                h_all_proof_elems_actual.capacity()
-            );
-            dbg!(oracle.nodes.to_vec().unwrap());
-            dbg!(&h_all_proof_elems_expected);
-            dbg!(&h_all_proof_elems_actual);
+        for (layer_idx, (codeword, oracle)) in fri_holder.flatten().into_iter().enumerate() {
+            dbg!(layer_idx);
+            let num_elems_per_leaf = oracle.num_elems_per_leaf;
+            assert_eq!(1 << folding_schedule[layer_idx], num_elems_per_leaf);
+            for coset_idx in 0..lde_degree {
+                let mut h_all_leaf_elems_expected =
+                    Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
+                let mut h_all_leaf_elems_actual =
+                    Vec::with_capacity(num_cols * num_queries * num_elems_per_leaf);
+                let coset_indexes = &original_indexes[coset_idx];
+                for query_idx in coset_indexes.iter().cloned() {
+                    let expected_query = codeword.get_leaf_sources(
+                        coset_idx,
+                        domain_size,
+                        lde_degree,
+                        query_idx as usize,
+                        num_elems_per_leaf,
+                    )?;
+                    h_all_leaf_elems_expected.extend_from_slice(&expected_query);
+                }
 
-            for (query_idx, expected_chunk) in h_all_proof_elems_expected
-                .chunks(num_actual_layers)
-                .enumerate()
-            {
-                let actual_chunk = construct_single_query_for_merkle_path_from_batch_sources(
-                    &h_all_proof_elems_actual,
-                    cap_size,
-                    num_queries,
-                    query_idx,
+                let effective_indexes = compute_effective_indexes(
+                    coset_indexes,
+                    coset_idx,
+                    domain_size,
                     num_elems_per_leaf,
-                    domain_size * lde_degree,
                 );
-                assert_eq!(actual_chunk.len(), num_actual_layers);
-                for (expected, actual) in expected_chunk.iter().zip(actual_chunk.iter()) {
-                    assert_eq!(expected, actual);
+                let mut d_effective_indexes = svec!(effective_indexes.len());
+                mem::h2d(&effective_indexes, &mut d_effective_indexes)?;
+
+                let num_queries = coset_indexes.len();
+                batch_query_leaf_sources(
+                    &d_effective_indexes,
+                    num_queries,
+                    codeword,
+                    num_cols,
+                    domain_size * lde_degree,
+                    num_elems_per_leaf,
+                    &mut h_all_leaf_elems_actual,
+                )?;
+
+                for (query_idx, expected_chunk) in h_all_leaf_elems_expected
+                    .chunks(num_elems_per_leaf * lde_degree)
+                    .enumerate()
+                {
+                    let (expected_c0, expected_c1) = expected_chunk.split_at(num_elems_per_leaf);
+                    let (actual_c0_batch, actual_c1_batch) =
+                        h_all_leaf_elems_actual.split_at(num_queries * num_elems_per_leaf);
+                    let start = query_idx * num_elems_per_leaf;
+                    let end = start + num_elems_per_leaf;
+                    assert_eq!(&expected_c0[..], &actual_c0_batch[start..end]);
+                    assert_eq!(&expected_c1[..], &actual_c1_batch[start..end]);
+                }
+
+                for (query_idx, expected_chunk) in h_all_leaf_elems_expected
+                    .chunks(num_elems_per_leaf * num_cols)
+                    .enumerate()
+                {
+                    let leaf_elems = construct_single_query_for_leaf_source_from_batch_sources(
+                        &h_all_leaf_elems_actual,
+                        num_queries,
+                        query_idx,
+                        num_cols,
+                        num_elems_per_leaf,
+                    );
+                    assert_eq!(expected_chunk.len(), leaf_elems.len());
+                    assert_eq!(expected_chunk, &leaf_elems);
+                }
+            }
+
+            let log2_schedule = num_elems_per_leaf.trailing_zeros() as usize;
+            domain_size >>= log2_schedule;
+            for indexes in original_indexes.iter_mut() {
+                for index in indexes.iter_mut() {
+                    *index >>= log2_schedule;
                 }
             }
         }
 
-        let log2_schedule = num_elems_per_leaf.trailing_zeros() as usize;
-        domain_size >>= log2_schedule;
-        for coset_idxes in all_indexes.iter_mut() {
-            for index in coset_idxes.iter_mut() {
-                *index >>= log2_schedule;
-            }
-        }
+        Ok(())
     }
 
-    Ok(())
+    #[serial]
+    #[test]
+    #[ignore]
+    fn test_batch_query_for_merkle_paths() -> CudaResult<()> {
+        let _ctx = ProverContext::create_14gb()?;
+        let domain_size = 1 << 4;
+        let lde_degree = 2;
+        let num_cols = 2;
+        let num_queries = 1 << 1;
+        let cap_size = 2;
+
+        run_batch_query_for_merkle_paths(domain_size, lde_degree, num_cols, num_queries, cap_size)?;
+
+        Ok(())
+    }
+
+    fn run_batch_query_for_merkle_paths(
+        domain_size: usize,
+        lde_degree: usize,
+        num_cols: usize,
+        num_queries: usize,
+        cap_size: usize,
+    ) -> CudaResult<()> {
+        use crate::prover::construct_single_query_for_merkle_path_from_batch_sources;
+        use boojum::worker::Worker;
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42 as u64);
+
+        assert!(domain_size >= num_queries);
+
+        let h_values = (0..num_cols * domain_size)
+            .map(|idx| F::from_u64_unchecked(idx as u64))
+            .collect::<Vec<_>>();
+        let mut d_values = DVec::from_vec(h_values)?;
+        let mut d_storage = dvec!(d_values.len() * lde_degree);
+        batch_ntt(&mut d_values, false, true, domain_size, num_cols)?;
+        batch_bitreverse(&mut d_values, domain_size)?;
+        for (v, s) in d_values
+            .chunks(domain_size)
+            .zip(d_storage.chunks_mut(domain_size * lde_degree))
+        {
+            for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
+                coset_fft_into(
+                    v,
+                    c,
+                    bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),
+                    lde_degree,
+                )?;
+            }
+        }
+        let base_codeword = CodeWord::new_base_assuming_adjacent(d_storage, lde_degree);
+        let folding_schedule = vec![1, 1];
+
+        let (fri_holder, _) = compute_fri::<_, Global>(
+            base_codeword.clone(),
+            &mut DefaultTranscript::new(()),
+            folding_schedule.clone(),
+            lde_degree,
+            cap_size,
+            &Worker::new(),
+        )?;
+
+        assert!(domain_size <= (u32::MAX as usize));
+        let mut all_indexes = Vec::with_capacity(lde_degree);
+        for _ in 0..lde_degree {
+            let indexes: Vec<_> = (0..num_queries)
+                .map(|_| rng.gen::<u32>() % domain_size as u32)
+                .collect();
+            assert_eq!(indexes.len(), num_queries);
+            all_indexes.push(indexes);
+        }
+        let mut domain_size = domain_size;
+
+        for (layer_idx, (codeword, oracle)) in fri_holder.flatten().into_iter().enumerate() {
+            dbg!(layer_idx);
+            let num_elems_per_leaf = oracle.num_elems_per_leaf;
+            assert_eq!(1 << folding_schedule[layer_idx], num_elems_per_leaf);
+            assert_eq!(lde_degree * domain_size, codeword.length());
+            let num_leafs = lde_degree * domain_size / num_elems_per_leaf;
+            assert_eq!(num_leafs, oracle.num_leafs);
+            let num_layers = num_leafs.trailing_zeros() as usize;
+            let layers_to_skip = cap_size.trailing_zeros() as usize;
+            let num_actual_layers = num_layers - layers_to_skip;
+            for coset_idx in 0..lde_degree {
+                let mut h_all_proof_elems_expected =
+                    Vec::with_capacity(num_actual_layers * num_queries);
+                let mut h_all_proof_elems_actual =
+                    Vec::with_capacity(num_actual_layers * num_queries * NUM_EL_PER_HASH);
+                let coset_indexes = &all_indexes[coset_idx];
+                assert_eq!(num_queries, coset_indexes.len());
+                for query_idx in coset_indexes.iter().cloned() {
+                    let expected_query = oracle.query::<DefaultTreeHasher, _>(
+                        codeword,
+                        coset_idx,
+                        lde_degree,
+                        query_idx as usize,
+                        domain_size,
+                    )?;
+                    dbg!(query_idx);
+                    dbg!(&expected_query.proof);
+                    h_all_proof_elems_expected.extend_from_slice(&expected_query.proof);
+                }
+                assert_eq!(
+                    h_all_proof_elems_expected.len(),
+                    h_all_proof_elems_expected.capacity()
+                );
+
+                let effective_indexes = compute_effective_indexes(
+                    coset_indexes,
+                    coset_idx,
+                    domain_size,
+                    num_elems_per_leaf,
+                );
+                dbg!(&effective_indexes);
+                let mut d_effective_indexes = svec!(effective_indexes.len());
+                mem::h2d(&effective_indexes, &mut d_effective_indexes)?;
+
+                batch_query_tree::<DefaultTreeHasher, _>(
+                    &d_effective_indexes,
+                    num_queries,
+                    oracle,
+                    cap_size,
+                    domain_size * lde_degree,
+                    num_elems_per_leaf,
+                    &mut h_all_proof_elems_actual,
+                )?;
+
+                assert_eq!(
+                    h_all_proof_elems_actual.len(),
+                    h_all_proof_elems_actual.capacity()
+                );
+                dbg!(oracle.nodes.to_vec().unwrap());
+                dbg!(&h_all_proof_elems_expected);
+                dbg!(&h_all_proof_elems_actual);
+
+                for (query_idx, expected_chunk) in h_all_proof_elems_expected
+                    .chunks(num_actual_layers)
+                    .enumerate()
+                {
+                    let actual_chunk = construct_single_query_for_merkle_path_from_batch_sources(
+                        &h_all_proof_elems_actual,
+                        cap_size,
+                        num_queries,
+                        query_idx,
+                        num_elems_per_leaf,
+                        domain_size * lde_degree,
+                    );
+                    assert_eq!(actual_chunk.len(), num_actual_layers);
+                    for (expected, actual) in expected_chunk.iter().zip(actual_chunk.iter()) {
+                        assert_eq!(expected, actual);
+                    }
+                }
+            }
+
+            let log2_schedule = num_elems_per_leaf.trailing_zeros() as usize;
+            domain_size >>= log2_schedule;
+            for coset_idxes in all_indexes.iter_mut() {
+                for index in coset_idxes.iter_mut() {
+                    *index >>= log2_schedule;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }

@@ -130,9 +130,10 @@ impl<'a, P: PolyForm> GenericArgumentStorage<'a, P> {
         unsafe { std::mem::transmute(self.as_polynomials()) }
     }
 
+    #[allow(dead_code)]
     pub fn clone(&self) -> CudaResult<Self> {
-        let num_polys = self.num_polys();
-        let domain_size = self.domain_size();
+        let _num_polys = self.num_polys();
+        let _domain_size = self.domain_size();
 
         let new = self.storage.clone()?;
 
@@ -259,13 +260,13 @@ impl<'a> AsSingleSlice for &GenericArgumentStorage<'a, CosetEvaluations> {
 impl<'a> LeafSourceQuery for ArgumentPolynomials<'a, CosetEvaluations> {
     fn get_leaf_sources(
         &self,
-        coset_idx: usize,
+        _coset_idx: usize,
         _lde_degree: usize,
         _domain_size: usize,
         row_idx: usize,
         _: usize,
     ) -> CudaResult<Vec<F>> {
-        let mut leaf_sources: Vec<F> = vec![];
+        let _leaf_sources: Vec<F> = vec![];
 
         let mut values = vec![];
         let el = self.z_poly.c0.storage.clone_el_to_host(row_idx)?;
@@ -346,7 +347,7 @@ impl<'a> ArgumentCache<'a> {
         cap_size: usize,
     ) -> CudaResult<(Vec<SubTree>, Vec<[F; 4]>)> {
         let fri_lde_degree = self.fri_lde_degree;
-        let used_lde_degree = self.used_lde_degree;
+        let _used_lde_degree = self.used_lde_degree;
         let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
         let mut setup_subtrees = vec![];
         let mut setup_subtree_caps = vec![];
@@ -394,6 +395,7 @@ impl<'a> ArgumentCache<'a> {
         return Ok(self.cosets[coset_idx].as_ref().unwrap());
     }
 
+    #[allow(dead_code)]
     pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         coset_idx: usize,
@@ -443,6 +445,7 @@ impl<'a> ArgumentCache<'a> {
         self.monomials.as_polynomials().z_poly
     }
 
+    #[allow(dead_code)]
     pub fn layout(&self) -> ArgumentsLayout {
         self.monomials.layout.clone()
     }
@@ -497,7 +500,7 @@ impl<'a> QuotientCache<'a> {
         cap_size: usize,
     ) -> CudaResult<(Vec<SubTree>, Vec<[F; 4]>)> {
         let fri_lde_degree = self.fri_lde_degree;
-        let used_lde_degree = self.used_lde_degree;
+        let _used_lde_degree = self.used_lde_degree;
         let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
         let mut setup_subtrees = vec![];
         let mut setup_subtree_caps = vec![];
@@ -545,6 +548,7 @@ impl<'a> QuotientCache<'a> {
         return Ok(self.cosets[coset_idx].as_ref().unwrap());
     }
 
+    #[allow(dead_code)]
     pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         coset_idx: usize,

@@ -16,8 +16,8 @@ mod tree;
 pub use tree::*;
 
 use boojum::cs::traits::GoodAllocator;
-use boojum_cuda::device_structures::{DeviceMatrix, DeviceMatrixMut};
-use cudart::{event::CudaEventCreateFlags, slice::DeviceSlice};
+
+use cudart::event::CudaEventCreateFlags;
 
 pub trait AsSingleSlice {
     fn domain_size(&self) -> usize;

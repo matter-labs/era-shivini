@@ -217,7 +217,7 @@ impl<'a, P: PolyForm> AsSingleSlice for &GenericComplexPolynomialStorage<'a, P> 
         let len = num_polys * domain_size;
         unsafe { std::slice::from_raw_parts(self.polynomials[0].c0.storage.as_ref().as_ptr(), len) }
     }
-    
+
     fn domain_size(&self) -> usize {
         self.polynomials[0].domain_size()
     }

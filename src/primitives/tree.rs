@@ -34,7 +34,7 @@ pub(crate) const POSEIDON_RATE: usize = 8;
 pub fn build_leaves_from_chunk(
     leaf_sources: &[F],
     result: &mut [F],
-    domain_size: usize,
+    _domain_size: usize,
     load_intermediate: bool,
     store_intermediate: bool,
 ) -> CudaResult<()> {
@@ -63,7 +63,7 @@ pub fn build_tree_nodes(
     cap_size: usize,
 ) -> CudaResult<()> {
     assert!(!leaf_hashes.is_empty());
-    let num_sources = leaf_hashes.len() / domain_size;
+    let _num_sources = leaf_hashes.len() / domain_size;
     let num_leafs = domain_size;
     let log_cap = cap_size.trailing_zeros();
     let depth = num_leafs.trailing_zeros();

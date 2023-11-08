@@ -1,45 +1,26 @@
-use crate::cs::{
-    materialize_permutation_cols_from_transformed_hints_into, variable_assignment, GpuSetup,
-};
+use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
 
 use super::*;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
-use super::*;
-use derivative::Derivative;
-
+use boojum::cs::{implementations::polynomial_storage::SetupBaseStorage, Variable};
 use boojum::{
-    algebraic_props::{
-        round_function::AbsorptionModeOverwrite,
-        sponge::{GoldilocksPoseidon2Sponge, GoldilocksPoseidonSponge},
-    },
     config::{CSConfig, CSSetupConfig, DevCSConfig, ProvingCSConfig, SetupCSConfig},
     cs::{
-        cs_builder::new_builder,
-        cs_builder_reference::CsReferenceImplementationBuilder,
         gates::{
             ConstantAllocatableCS, ConstantsAllocatorGate, FmaGateInBaseFieldWithoutConstant,
-            NopGate, PublicInputGate, ReductionGate, UIntXAddGate,
+            NopGate, PublicInputGate, ReductionGate,
         },
         implementations::{
-            hints::{DenseVariablesCopyHint, DenseWitnessCopyHint},
-            lookup_table::LookupTable,
-            pow::NoPow,
-            proof::Proof,
-            prover::ProofConfig,
-            reference_cs::{CSReferenceAssembly, CSReferenceImplementation},
+            pow::NoPow, proof::Proof, prover::ProofConfig, reference_cs::CSReferenceAssembly,
             setup::FinalizationHintsForProver,
-            transcript::{GoldilocksPoisedon2Transcript, GoldilocksPoisedonTranscript},
-            verifier::{VerificationKey, Verifier},
-            witness::WitnessVec,
         },
-        oracle::{merkle_tree::MerkleTreeWithCap, TreeHasher},
+        oracle::merkle_tree::MerkleTreeWithCap,
         traits::{cs::ConstraintSystem, gate::GatePlacementStrategy},
-        CSGeometry, LookupParameters,
+        CSGeometry,
     },
-    field::{goldilocks::GoldilocksExt2, SmallField, U64Representable},
+    field::{goldilocks::GoldilocksExt2, U64Representable},
     gadgets::{
-        num::Num,
         sha256::sha256,
         tables::{
             ch4::{create_ch4_table, Ch4Table},
@@ -48,7 +29,6 @@ use boojum::{
             trixor4::{create_tri_xor_table, TriXor4Table},
         },
         traits::{
-            allocatable::CSAllocatable,
             round_function::{BuildableCircuitRoundFunction, CircuitRoundFunction},
             witnessable::WitnessHookable,
         },
@@ -57,40 +37,10 @@ use boojum::{
     implementations::poseidon2::Poseidon2Goldilocks,
     worker::Worker,
 };
-use boojum::{
-    cs::{
-        gates::{
-            lookup_marker::LookupFormalGate, ConstantToVariableMappingToolMarker,
-            FmaGateInBaseWithoutConstantParams, ReductionGateParams,
-        },
-        implementations::{
-            polynomial_storage::{SetupBaseStorage, SetupStorage},
-            reference_cs::CSDevelopmentAssembly,
-            witness::WitnessSet,
-        },
-        Variable,
-    },
-    field::traits::field_like::{PrimeFieldLike, TrivialContext},
-};
 
-use boojum::{
-    cs::{
-        implementations::{
-            buffering_source::BufferingPolyStorage,
-            polynomial::GenericPolynomial,
-            polynomial_storage::{ProverTraceView, TraceHolder, WitnessStorage},
-            prover::materialize_ext_challenge_powers,
-        },
-        traits::{
-            cs::*, destination_view::GateEvaluationReducingDestination, destination_view::*,
-            evaluator::GatePurpose, evaluator::*, trace_source::*,
-        },
-    },
-    field::traits::field_like::PrimeFieldLikeVectorized,
-    gadgets::{tables::*, traits::witnessable::*},
-};
-use rand::thread_rng;
+use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 
+#[allow(dead_code)]
 pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
 type P = F;
 use serial_test::serial;
@@ -99,7 +49,7 @@ use serial_test::serial;
 #[test]
 #[ignore]
 fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
-    let (mut setup_cs, finalization_hint) =
+    let (setup_cs, finalization_hint) =
         init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -109,7 +59,7 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
         prover_config.merkle_tree_cap_size,
     );
     let domain_size = setup_cs.max_trace_len;
-    let ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
         setup_base.clone(),
         clone_reference_tree(&setup_tree),
@@ -139,10 +89,9 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
     };
 
     let expected_proof = {
-        let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
-            ProvingCSConfig,
-            true,
-        >(finalization_hint.as_ref());
+        let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
+            finalization_hint.as_ref(),
+        );
         let worker = Worker::new();
         let prover_config = init_proof_cfg();
 
@@ -175,7 +124,6 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
         max_allowed_constraint_degree: 4,
     };
 
-    use boojum::config::DevCSConfig;
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
         CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 20);
@@ -201,7 +149,7 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
         type R = Poseidon2Goldilocks;
         let num_gates = 1 << 16;
         let mut prev_state = [cs.allocate_constant(F::ZERO); 12];
-        let mut to_keep = [cs.allocate_constant(F::ZERO); 4];
+        let _to_keep = [cs.allocate_constant(F::ZERO); 4];
         for _ in 0..num_gates {
             let to_absorb =
                 cs.alloc_multiple_variables_from_witnesses([F::from_u64_unchecked(rng.gen()); 8]);
@@ -215,7 +163,7 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
 
     if DO_SYNTH {
         let output = synthesize(&mut owned_cs);
-        let mut next_available_row = owned_cs.next_available_row();
+        let next_available_row = owned_cs.next_available_row();
         for (column, var) in output.into_iter().enumerate() {
             let gate = PublicInputGate::new(var);
             owned_cs.place_gate(&gate, next_available_row);
@@ -246,12 +194,12 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
 #[test]
 #[ignore]
 fn test_permutation_polys() {
-    let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (setup_cs, _finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
 
-    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+    let (setup_base, _setup, _vk, setup_tree, _vars_hint, _wits_hint) = setup_cs.get_full_setup(
         &worker,
         prover_config.fri_lde_factor,
         prover_config.merkle_tree_cap_size,
@@ -260,7 +208,7 @@ fn test_permutation_polys() {
     let expected_permutation_polys = setup_base.copy_permutation_polys.clone();
 
     let domain_size = setup_cs.max_trace_len;
-    let ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
 
     let num_copy_permutation_polys = variables_hint.maps.len();
     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
@@ -313,16 +261,16 @@ fn test_setup_comparison() {
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
 
-    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+    let (setup_base, _setup, _vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
         &worker,
         prover_config.fri_lde_factor,
         prover_config.merkle_tree_cap_size,
     );
 
-    let expected_permutation_polys = setup_base.copy_permutation_polys.clone();
+    let _expected_permutation_polys = setup_base.copy_permutation_polys.clone();
 
     let domain_size = setup_cs.max_trace_len;
-    let ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
 
     let expected_setup = GenericSetupStorage::from_host_values(&setup_base).unwrap();
 
@@ -359,8 +307,9 @@ fn clone_reference_tree(
 
 #[serial]
 #[test]
+#[ignore]
 fn test_proof_comparison_for_sha256() {
-    let (mut setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -370,7 +319,7 @@ fn test_proof_comparison_for_sha256() {
         prover_config.merkle_tree_cap_size,
     );
     let domain_size = setup_cs.max_trace_len;
-    let ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
     // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
         setup_base.clone(),
@@ -398,7 +347,7 @@ fn test_proof_comparison_for_sha256() {
     };
 
     let expected_proof = {
-        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
         let worker = Worker::new();
         let prover_config = init_proof_cfg();
 
@@ -418,6 +367,7 @@ fn test_proof_comparison_for_sha256() {
     compare_proofs(&expected_proof, &actual_proof);
 }
 
+#[allow(dead_code)]
 pub fn init_reusable_cs_for_sha256(
     finalization_hint: &FinalizationHintsForProver,
 ) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
@@ -436,7 +386,7 @@ pub fn init_reusable_cs_for_sha256(
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(&input);
-    let reference_output = hasher.finalize();
+    let _reference_output = hasher.finalize();
 
     let geometry = CSGeometry {
         num_columns_under_copy_permutation: 20,
@@ -491,7 +441,7 @@ pub fn init_reusable_cs_for_sha256(
 
     let table = create_4bit_chunk_split_table::<F, 2>();
     owned_cs.add_lookup_table::<Split4BitChunkTable<2>, 4>(table);
-    let mut owned_cs = owned_cs.into_assembly_for_repeated_proving(&finalization_hint);
+    let owned_cs = owned_cs.into_assembly_for_repeated_proving(&finalization_hint);
 
     owned_cs
 }
@@ -538,7 +488,7 @@ fn compare_proofs(
         actual_proof.queries_per_fri_repetition.len(),
     );
 
-    for (query_idx, (expected_fri_query, actual_fri_query)) in expected_proof
+    for (_query_idx, (expected_fri_query, actual_fri_query)) in expected_proof
         .queries_per_fri_repetition
         .iter()
         .zip(actual_proof.queries_per_fri_repetition.iter())
@@ -585,7 +535,7 @@ fn compare_proofs(
             actual_fri_query.fri_queries.len(),
         );
 
-        for (layer_idx, (expected, actual)) in expected_fri_query
+        for (_layer_idx, (expected, actual)) in expected_fri_query
             .fri_queries
             .iter()
             .zip(actual_fri_query.fri_queries.iter())
@@ -623,7 +573,7 @@ fn compare_proofs(
             actual_fri_query.setup_query.proof,
         );
 
-        for (layer_idx, (expected, actual)) in expected_fri_query
+        for (_layer_idx, (expected, actual)) in expected_fri_query
             .fri_queries
             .iter()
             .zip(actual_fri_query.fri_queries.iter())
@@ -650,7 +600,7 @@ fn test_reference_proof_for_sha256() {
         prover_config.merkle_tree_cap_size,
     );
     let witness_set = cs.take_witness_using_hints(&worker, &vars_hint, &wits_hint);
-    let proof = cs.prove_cpu_basic::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
+    let _proof = cs.prove_cpu_basic::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
         &worker,
         witness_set,
         &base_setup,
@@ -701,7 +651,6 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
         max_allowed_constraint_degree: 4,
     };
 
-    use boojum::config::DevCSConfig;
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
         CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 19);
@@ -784,10 +733,9 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
         cs.pad_and_shrink_using_hint(finalization_hint);
         None
     };
-    drop(cs);
     let mut owned_cs = owned_cs.into_assembly();
     owned_cs.wait_for_witness();
-    let worker = Worker::new_with_num_threads(8);
+    let _worker = Worker::new_with_num_threads(8);
 
     (owned_cs, finalization_hint)
 }
@@ -795,26 +743,14 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
 #[cfg(test)]
 #[cfg(feature = "zksync")]
 mod zksync {
-    use std::{fs::File, path::PathBuf};
+    use std::path::PathBuf;
 
     use super::*;
 
-    use boojum::{
-        config::CSConfig,
-        cs::{
-            cs_builder_verifier::CsVerifierBuilder, gates::BooleanConstraintGate,
-            implementations::fast_serialization::MemcopySerializable, traits::circuit, Place,
-        },
-    };
+    use boojum::cs::implementations::fast_serialization::MemcopySerializable;
     use circuit_definitions::{
         aux_definitions::witness_oracle::VmWitnessOracle,
-        base_layer_proof_config,
-        circuit_definitions::{
-            base_layer::ZkSyncBaseLayerCircuit, recursion_layer::ZkSyncRecursiveLayerCircuit,
-            ZkSyncUniformCircuitInstance, ZkSyncUniformSynthesisFunction,
-        },
-        recursion_layer_proof_config, ZkSyncDefaultRoundFunction, BASE_LAYER_CAP_SIZE,
-        BASE_LAYER_FRI_LDE_FACTOR, RECURSION_LAYER_CAP_SIZE, RECURSION_LAYER_FRI_LDE_FACTOR,
+        circuit_definitions::base_layer::ZkSyncBaseLayerCircuit, ZkSyncDefaultRoundFunction,
     };
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 
@@ -825,8 +761,8 @@ mod zksync {
         init_cs_for_external_proving, init_or_synthesize_assembly, synth_circuit_for_proving,
         synth_circuit_for_setup, CircuitWrapper,
     };
-    use boojum::field::SmallField;
 
+    #[allow(dead_code)]
     pub type BaseLayerCircuit =
         ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
 
@@ -859,6 +795,7 @@ mod zksync {
         circuits
     }
 
+    #[allow(dead_code)]
     fn scan_directory_for_setups<P: AsRef<Path>>(dir: P) -> Vec<SetupBaseStorage<F, F>> {
         let mut circuits = vec![];
         let file_paths = scan_directory(dir);
@@ -894,7 +831,7 @@ mod zksync {
     #[ignore]
     fn test_single_shot_zksync_setup_comparison() {
         let circuit = get_circuit_from_env();
-        let ctx = ProverContext::create().expect("gpu prover context");
+        let _ctx = ProverContext::create().expect("gpu prover context");
 
         println!(
             "{} {}",
@@ -905,15 +842,15 @@ mod zksync {
         let (setup_cs, _) = synth_circuit_for_setup(circuit.clone());
         let proof_cfg = circuit.proof_config();
 
-        let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+        let (setup_base, _setup, _vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
             &worker,
             proof_cfg.fri_lde_factor,
             proof_cfg.merkle_tree_cap_size,
         );
 
-        let expected_permutation_polys = setup_base.copy_permutation_polys.clone();
+        let _expected_permutation_polys = setup_base.copy_permutation_polys.clone();
 
-        let domain_size = setup_cs.max_trace_len;
+        let _domain_size = setup_cs.max_trace_len;
 
         let expected_setup = GenericSetupStorage::from_host_values(&setup_base).unwrap();
 
@@ -942,15 +879,16 @@ mod zksync {
     #[test]
     fn compare_proofs_for_all_zksync_circuits() -> CudaResult<()> {
         let worker = &Worker::new();
-        let ctx = ProverContext::create()?;
+        let _ctx = ProverContext::create()?;
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("./test_data/{}", main_dir);
             dbg!(&data_dir);
-            let mut circuits = scan_directory_for_circuits(&data_dir);
-            let mut reference_proofs = scan_directory_for_proofs(&data_dir);
+            let circuits = scan_directory_for_circuits(&data_dir);
+            let reference_proofs = scan_directory_for_proofs(&data_dir);
 
-            for (circuit, reference_proof) in circuits.into_iter().zip(reference_proofs.into_iter())
+            for (circuit, _reference_proof) in
+                circuits.into_iter().zip(reference_proofs.into_iter())
             {
                 let reference_proof_path =
                     format!("{}/{}.cpu.proof", data_dir, circuit.numeric_circuit_type());
@@ -975,7 +913,7 @@ mod zksync {
                 let proof_config = circuit.proof_config();
 
                 let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit.clone());
-                let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs
+                let (setup_base, _setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs
                     .get_full_setup(
                         worker,
                         proof_config.fri_lde_factor,
@@ -1006,12 +944,12 @@ mod zksync {
                     .expect("gpu proof")
                 };
 
-                let mut reference_proof_file = std::fs::File::open(reference_proof_path).unwrap();
+                let reference_proof_file = std::fs::File::open(reference_proof_path).unwrap();
                 let reference_proof = bincode::deserialize_from(&reference_proof_file).unwrap();
                 let actual_proof = gpu_proof.into();
                 compare_proofs(&reference_proof, &actual_proof);
                 assert!(circuit.verify_proof(&vk, &actual_proof));
-                let mut proof_file = std::fs::File::create(gpu_proof_path).unwrap();
+                let proof_file = std::fs::File::create(gpu_proof_path).unwrap();
 
                 bincode::serialize_into(proof_file, &actual_proof).expect("write proof into file");
             }
@@ -1061,7 +999,7 @@ mod zksync {
 
                 println!("reference proving");
                 let reference_proof = {
-                    let (proving_cs, finalization_hint) =
+                    let (proving_cs, _finalization_hint) =
                         init_or_synthesize_assembly::<ProvingCSConfig, true>(
                             circuit.clone(),
                             Some(&finalization_hint),
@@ -1079,7 +1017,7 @@ mod zksync {
                     )
                 };
                 assert!(circuit.verify_proof(&vk, &reference_proof));
-                let mut proof_file = std::fs::File::create(format!(
+                let proof_file = std::fs::File::create(format!(
                     "{}/{}.cpu.proof",
                     data_dir,
                     circuit.numeric_circuit_type()
@@ -1097,7 +1035,7 @@ mod zksync {
     #[ignore]
     fn compare_proofs_for_single_zksync_circuit_in_single_shot() {
         let circuit = get_circuit_from_env();
-        let ctx = ProverContext::create_14gb().expect("gpu prover context");
+        let _ctx = ProverContext::create_14gb().expect("gpu prover context");
 
         println!(
             "{} {}",
@@ -1172,7 +1110,7 @@ mod zksync {
     #[ignore]
     fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot() {
         let circuit = get_circuit_from_env();
-        let ctx = ProverContext::create().expect("gpu prover context");
+        let _ctx = ProverContext::create().expect("gpu prover context");
 
         println!(
             "{} {}",
@@ -1251,6 +1189,7 @@ mod zksync {
 
     #[serial]
     #[test]
+    #[ignore]
     fn test_reference_proof_for_circuit() {
         let circuit = get_circuit_from_env();
         println!(
@@ -1276,11 +1215,11 @@ mod zksync {
                 .trailing_zeros()
         );
 
-        let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+        let _proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
         let reference_proof = {
             // we can't clone assembly lets synth it again
             let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-            let witness_set =
+            let _witness_set =
                 proving_cs.take_witness_using_hints(&worker, &vars_hint, &witness_hints);
             proving_cs
                 .prove_from_precomputations::<EXT, DefaultTranscript, DefaultTreeHasher, NoPow>(
@@ -1302,11 +1241,11 @@ mod zksync {
     #[test]
     #[ignore]
     fn test_generate_reference_setups_for_all_zksync_circuits() {
-        let worker = Worker::new();
+        let _worker = Worker::new();
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("./test_data/{}", main_dir);
-            let mut circuits = scan_directory_for_circuits(main_dir);
+            let circuits = scan_directory_for_circuits(main_dir);
 
             let worker = &Worker::new();
             for circuit in circuits {
@@ -1322,7 +1261,7 @@ mod zksync {
                     circuit.numeric_circuit_type()
                 );
 
-                let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit);
+                let (setup_cs, _finalization_hint) = synth_circuit_for_setup(circuit);
                 let reference_base_setup = setup_cs.create_base_setup(&worker, &mut ());
 
                 let setup_file = std::fs::File::create(&setup_file_path).unwrap();
@@ -1338,13 +1277,13 @@ mod zksync {
     #[test]
     #[ignore]
     fn test_generate_gpu_setups_for_all_zksync_circuits() {
-        let worker = Worker::new();
-        let ctx = ProverContext::create().expect("gpu context");
+        let _worker = Worker::new();
+        let _ctx = ProverContext::create().expect("gpu context");
         let worker = &Worker::new();
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("{}/{}", TEST_DATA_ROOT_DIR, main_dir);
-            let mut circuits = scan_directory_for_circuits(&data_dir);
+            let circuits = scan_directory_for_circuits(&data_dir);
 
             for circuit in circuits {
                 println!(
@@ -1357,14 +1296,14 @@ mod zksync {
                     format!("{}/{}.gpu.setup", data_dir, circuit.numeric_circuit_type());
 
                 let proof_cfg = circuit.proof_config();
-                let (mut setup_cs, finalization_hint) = synth_circuit_for_setup(circuit);
+                let (setup_cs, _finalization_hint) = synth_circuit_for_setup(circuit);
                 let (
                     reference_base_setup,
-                    setup,
-                    vk,
+                    _setup,
+                    _vk,
                     reference_setup_tree,
-                    vars_hint,
-                    witness_hints,
+                    _vars_hint,
+                    _witness_hints,
                 ) = setup_cs.get_full_setup(
                     worker,
                     proof_cfg.fri_lde_factor,

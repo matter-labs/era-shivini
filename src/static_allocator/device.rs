@@ -2,10 +2,10 @@ use cudart::memory::DeviceAllocation;
 
 use super::*;
 use derivative::*;
-use std::alloc::{Allocator, Global, Layout};
-use std::mem::{self, ManuallyDrop, MaybeUninit};
+use std::alloc::{Allocator, Layout};
+
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[derive(Derivative)]
@@ -50,10 +50,6 @@ impl StaticDeviceAllocator {
     pub fn init(num_blocks: usize, block_size: usize) -> CudaResult<Self> {
         assert!(num_blocks > 32);
         assert!(block_size.is_power_of_two());
-        use cudart::{
-            memory::DeviceAllocation,
-            slice::{CudaSlice, CudaSliceMut},
-        };
         let memory_size = num_blocks * block_size;
         let memory_size_in_bytes = memory_size * std::mem::size_of::<F>();
         let block_size_in_bytes = block_size * std::mem::size_of::<F>();
@@ -61,7 +57,7 @@ impl StaticDeviceAllocator {
         let memory = DeviceAllocation::alloc(memory_size_in_bytes).expect(&format!(
             "failed to allocate {} bytes",
             memory_size_in_bytes
-        ));        
+        ));
 
         let alloc = StaticDeviceAllocator {
             memory: Arc::new(memory),
@@ -74,14 +70,10 @@ impl StaticDeviceAllocator {
     }
 
     pub fn init_all(block_size: usize) -> CudaResult<Self> {
-        use cudart::{
-            memory::{memory_get_info, DeviceAllocation},
-            slice::CudaSliceMut,
-        };
-        use std::mem::ManuallyDrop;
+        use cudart::memory::memory_get_info;
 
         let block_size_in_bytes = block_size * std::mem::size_of::<F>();
-        let (memory_size_in_bytes, total) = memory_get_info().expect("get memory info");
+        let (memory_size_in_bytes, _total) = memory_get_info().expect("get memory info");
         let precomputed_data_in_bytes = 256 * 1024 * 1024; // precomputed data is <=256mb
         let free_memory_size_in_bytes = memory_size_in_bytes - precomputed_data_in_bytes;
         assert!(free_memory_size_in_bytes >= block_size);
@@ -90,18 +82,14 @@ impl StaticDeviceAllocator {
     }
 
     pub fn init_14gb(block_size: usize) -> CudaResult<Self> {
-        use cudart::{
-            memory::{memory_get_info, DeviceAllocation},
-            slice::CudaSliceMut,
-        };
-        use std::mem::ManuallyDrop;
+        use cudart::memory::memory_get_info;
 
         let block_size_in_bytes = block_size * std::mem::size_of::<F>();
-        let (memory_size_in_bytes, total) = memory_get_info().expect("get memory info");
+        let (memory_size_in_bytes, _total) = memory_get_info().expect("get memory info");
         let precomputed_data_in_bytes = 256 * 1024 * 1024; // precomputed data is <=256mb
         let free_memory_size_in_bytes = memory_size_in_bytes - precomputed_data_in_bytes;
         assert!(free_memory_size_in_bytes >= block_size);
-        let requested_memory_size_in_bytes = 14usize * 0x40000000; // 16gb        
+        let requested_memory_size_in_bytes = 14usize * 0x40000000; // 16gb
         assert!(
             requested_memory_size_in_bytes <= free_memory_size_in_bytes,
             "requested memory {}bytes, free memory {} bytes",
@@ -125,6 +113,7 @@ impl StaticDeviceAllocator {
     }
 
     // TODO: handle thread-safety
+    #[allow(unreachable_code)]
     fn find_adjacent_free_blocks(
         &self,
         requested_num_blocks: usize,
@@ -132,8 +121,8 @@ impl StaticDeviceAllocator {
         if requested_num_blocks > self.bitmap.len() {
             return None;
         }
-        let mut range_of_blocks_found = false;
-        let mut found_range = 0..0;
+        let _range_of_blocks_found = false;
+        let _found_range = 0..0;
 
         let mut start = 0;
         let mut end = requested_num_blocks;
@@ -165,7 +154,7 @@ impl StaticDeviceAllocator {
 
     fn free_block(&self, index: usize) {
         // assert!(self.bitmap[index].load(Ordering::SeqCst));
-        self.bitmap[index]
+        let _ = self.bitmap[index]
             .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok();
     }
@@ -185,11 +174,12 @@ unsafe impl Send for StaticDeviceAllocator {}
 unsafe impl Sync for StaticDeviceAllocator {}
 
 unsafe impl Allocator for StaticDeviceAllocator {
+    #[allow(unreachable_code)]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
         let size = layout.size();
         assert!(size > 0);
         assert_eq!(size % self.block_size_in_bytes, 0);
-        let alignment = layout.align();
+        let _alignment = layout.align();
         if size > self.block_size_in_bytes {
             let num_blocks = size / self.block_size_in_bytes;
             if let Some(range) = self.find_adjacent_free_blocks(num_blocks) {
@@ -214,7 +204,7 @@ unsafe impl Allocator for StaticDeviceAllocator {
         }
     }
 
-    fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+    fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
         todo!()
     }
 

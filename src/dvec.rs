@@ -96,7 +96,7 @@ impl<T, A: StaticAllocator> DVec<T, A> {
         self.data.allocator().clone()
     }
 
-    pub fn into_adjacent_chunks(mut self, chunk_size: usize) -> Vec<DVec<T, A>> {
+    pub fn into_adjacent_chunks(self, chunk_size: usize) -> Vec<DVec<T, A>> {
         assert_eq!(self.len() % chunk_size, 0);
         let num_chunks = self.len() / chunk_size;
         let (original_ptr, _len, _cap, alloc) = self.data.into_raw_parts_with_alloc();
@@ -342,7 +342,7 @@ impl std::fmt::Debug for DF {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let values = self.inner.to_vec().unwrap();
         assert_eq!(values.len(), 1);
-        write!(f, "{}", values[0]);
+        write!(f, "{}", values[0]).unwrap();
 
         Ok(())
     }

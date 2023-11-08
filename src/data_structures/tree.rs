@@ -23,6 +23,7 @@ impl OracleType {
     }
 }
 
+#[allow(dead_code)]
 pub struct TreeCache {
     folding_schedule: Vec<usize>,
     fri_lde_degree: usize,
@@ -52,6 +53,7 @@ impl TreeCache {
         assert!(self.storage.insert(OracleType::Trace, subtrees).is_none())
     }
 
+    #[allow(dead_code)]
     pub fn get_trace_subtrees(&self) -> &Vec<SubTree> {
         self.get(OracleType::Trace)
     }
@@ -68,6 +70,7 @@ impl TreeCache {
             .is_none())
     }
 
+    #[allow(dead_code)]
     pub fn get_argument_subtrees(&self) -> &Vec<SubTree> {
         self.get(OracleType::Argument)
     }
@@ -76,9 +79,10 @@ impl TreeCache {
         self.get_coset_subtree(OracleType::Argument, coset_idx)
     }
 
+    #[allow(dead_code)]
     pub fn set_setup_tree_from_host_data(
         &mut self,
-        setup_tree: &MerkleTreeWithCap<F, DefaultTreeHasher>,
+        _setup_tree: &MerkleTreeWithCap<F, DefaultTreeHasher>,
     ) {
         unimplemented!()
     }
@@ -88,6 +92,7 @@ impl TreeCache {
         assert!(self.storage.insert(OracleType::Setup, subtrees).is_none())
     }
 
+    #[allow(dead_code)]
     pub fn get_setup_subtrees(&self) -> &Vec<SubTree> {
         self.get(OracleType::Setup)
     }
@@ -104,6 +109,7 @@ impl TreeCache {
             .is_none())
     }
 
+    #[allow(dead_code)]
     pub fn get_quotient_subtrees(&self) -> &Vec<SubTree> {
         self.get(OracleType::Quotient)
     }

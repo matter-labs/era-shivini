@@ -1,13 +1,10 @@
 use super::*;
-use cudart::{
-    memory::{CudaHostAllocFlags, HostAllocation},
-    slice::{CudaSlice, CudaSliceMut},
-};
+use cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use derivative::*;
-use std::alloc::{Allocator, Global, Layout};
-use std::mem::{self, ManuallyDrop, MaybeUninit};
+use std::alloc::{Allocator, Layout};
+
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[derive(Derivative)]
@@ -22,7 +19,7 @@ pub struct StaticHostAllocator {
 
 impl Default for StaticHostAllocator {
     fn default() -> Self {
-        let domain_size = 1 << 20;
+        let _domain_size = 1 << 20;
         Self::init(0, 0).unwrap() // TODO
     }
 }
@@ -45,6 +42,7 @@ impl StaticHostAllocator {
         self.memory.as_ptr()
     }
 
+    #[allow(dead_code)]
     pub fn block_size_in_bytes(&self) -> usize {
         self.block_size_in_bytes
     }
@@ -61,7 +59,11 @@ impl StaticHostAllocator {
                 &format!("failed to allocate {} bytes", memory_size_in_bytes),
             );
 
-            println!("allocated {} bytes({}gb) on device on host", memory_size_in_bytes, memory_size_in_bytes / 0x40000000);
+        println!(
+            "allocated {} bytes({}gb) on device on host",
+            memory_size_in_bytes,
+            memory_size_in_bytes / 0x40000000
+        );
 
         let alloc = StaticHostAllocator {
             memory: Arc::new(memory),
@@ -84,7 +86,9 @@ impl StaticHostAllocator {
         }
         None
     }
+
     // TODO: handle thread-safety
+    #[allow(unreachable_code)]
     fn find_adjacent_free_blocks(
         &self,
         requested_num_blocks: usize,
@@ -92,8 +96,8 @@ impl StaticHostAllocator {
         if requested_num_blocks > self.bitmap.len() {
             return None;
         }
-        let mut range_of_blocks_found = false;
-        let mut found_range = 0..0;
+        let _range_of_blocks_found = false;
+        let _found_range = 0..0;
 
         let mut start = 0;
         let mut end = requested_num_blocks;
@@ -125,7 +129,7 @@ impl StaticHostAllocator {
 
     fn free_block(&self, index: usize) {
         assert!(self.bitmap[index].load(Ordering::SeqCst));
-        self.bitmap[index]
+        let _ = self.bitmap[index]
             .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok();
     }
@@ -145,11 +149,12 @@ unsafe impl Send for StaticHostAllocator {}
 unsafe impl Sync for StaticHostAllocator {}
 
 unsafe impl Allocator for StaticHostAllocator {
+    #[allow(unreachable_code)]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
         let size = layout.size();
         assert!(size > 0);
         assert_eq!(size % self.block_size_in_bytes, 0);
-        let alignment = layout.align();
+        let _alignment = layout.align();
         if size > self.block_size_in_bytes {
             let num_blocks = size / self.block_size_in_bytes;
             if let Some(range) = self.find_adjacent_free_blocks(num_blocks) {
@@ -174,7 +179,7 @@ unsafe impl Allocator for StaticHostAllocator {
         }
     }
 
-    fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
+    fn allocate_zeroed(&self, _layout: Layout) -> Result<NonNull<[u8]>, std::alloc::AllocError> {
         todo!()
     }
 
@@ -211,6 +216,7 @@ impl SmallStaticHostAllocator {
         self.inner.free()
     }
 
+    #[allow(dead_code)]
     pub fn block_size_in_bytes(&self) -> usize {
         self.inner.block_size_in_bytes
     }

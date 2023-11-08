@@ -1,36 +1,28 @@
-use std::{
-    alloc::Global, collections::HashMap, mem::ManuallyDrop, ops::Deref, sync::atomic::AtomicU32,
-};
+use std::{alloc::Global, sync::atomic::AtomicU32};
 
 use boojum::{
-    config::{CSConfig, CSSetupConfig, CSWitnessEvaluationConfig, ProvingCSConfig},
+    config::ProvingCSConfig,
     cs::{
         gates::lookup_marker::LookupFormalGate,
         implementations::{
             copy_permutation::non_residues_for_copy_permutation,
-            hints::{DenseVariablesCopyHint, DenseWitnessCopyHint},
-            lookup_table,
-            polynomial::{GenericPolynomial, LagrangeForm},
-            polynomial_storage::{SetupBaseStorage, SetupStorage, TraceHolder, WitnessStorage},
             pow::{NoPow, PoWRunner},
-            proof::{self, OracleQuery, Proof, SingleRoundQueries},
+            proof::{OracleQuery, Proof, SingleRoundQueries},
             prover::ProofConfig,
-            reference_cs::{CSReferenceAssembly, CSReferenceImplementation},
-            setup::{self, TreeNode},
+            reference_cs::CSReferenceAssembly,
+            setup::TreeNode,
             transcript::Transcript,
             utils::{domain_generator_for_size, materialize_powers_serial},
             verifier::VerificationKey,
-            witness::{WitnessSet, WitnessVec},
+            witness::WitnessVec,
         },
-        oracle::{merkle_tree::MerkleTreeWithCap, TreeHasher},
-        toolboxes::{gate_config::GateConfigurationHolder, static_toolbox::StaticToolboxHolder},
+        oracle::TreeHasher,
         traits::{gate::GatePlacementStrategy, GoodAllocator},
-        CSGeometry, LookupParameters, Place, Variable, Witness,
+        LookupParameters, Place, Variable, Witness,
     },
-    field::{traits::field_like::TrivialContext, FieldExtension, U64Representable},
+    field::U64Representable,
     worker::Worker,
 };
-use smallvec::SmallVec;
 
 use crate::cs::GpuSetup;
 use crate::{
@@ -65,7 +57,7 @@ pub fn gpu_prove_from_external_witness_data<
     // );
     unsafe {
         assert!(
-            _cuda_context.is_some(),
+            _CUDA_CONTEXT.is_some(),
             "prover context should be initialized"
         )
     };
@@ -280,7 +272,7 @@ pub fn gpu_prove<
 ) -> CudaResult<GpuProof<A>> {
     unsafe {
         assert!(
-            _cuda_context.is_some(),
+            _CUDA_CONTEXT.is_some(),
             "prover context should be initialized"
         )
     };
@@ -420,7 +412,7 @@ fn gpu_prove_from_trace<
     // Then compute coset evaluations + cap of the sub tree for each coset
     assert!(cap_size.is_power_of_two());
     assert!(fri_lde_degree.is_power_of_two());
-    let coset_cap_size = if cap_size < fri_lde_degree {
+    let _coset_cap_size = if cap_size < fri_lde_degree {
         1
     } else {
         assert!(cap_size.is_power_of_two());
@@ -431,8 +423,8 @@ fn gpu_prove_from_trace<
     let trace_layout = raw_trace.layout.clone();
     let TraceLayout {
         num_variable_cols,
-        num_witness_cols,
-        num_multiplicity_cols,
+        num_witness_cols: _,
+        num_multiplicity_cols: _,
     } = trace_layout.clone();
     let num_trace_polys = raw_trace.num_polys();
     assert_eq!(monomial_trace.domain_size(), domain_size);
@@ -499,16 +491,17 @@ fn gpu_prove_from_trace<
         let h_lookup_gamma = transcript.get_multiple_challenges_fixed::<2>();
         let h_lookup_gamma = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_lookup_gamma);
         let lookup_beta: DExt = h_lookup_beta.into();
-        let lookup_gamma: DExt = h_lookup_gamma.into();
+        let _lookup_gamma: DExt = h_lookup_gamma.into();
 
         let lookup_evaluator_id = 0;
-        let selector_subpath = setup_base
+        let _selector_subpath = setup_base
             .selectors_placement
             .output_placement(lookup_evaluator_id)
             .expect("lookup gate must be placed");
 
         let variables_offset = cs.parameters.num_columns_under_copy_permutation;
 
+        #[allow(unreachable_code)]
         let powers_of_gamma = match cs.lookup_parameters {
             LookupParameters::NoLookup => {
                 unreachable!()
@@ -607,7 +600,7 @@ fn gpu_prove_from_trace<
 
     let h_alpha = transcript.get_multiple_challenges_fixed::<2>();
     let h_alpha = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_alpha);
-    let alpha: DExt = h_alpha.into();
+    let _alpha: DExt = h_alpha.into();
 
     let num_lookup_subarguments = cs.num_sublookup_arguments();
     let num_multiplicities_polys = cs.num_multipicities_polys();
@@ -904,7 +897,7 @@ fn gpu_prove_from_trace<
         domain_size.trailing_zeros(),
     );
 
-    let first_codeword = unsafe {
+    let first_codeword = {
         // use deep quotient storage as adjacent full storage as usual
         let (ptr, len, cap, allocator) = deep_quotient
             .c0
@@ -1109,7 +1102,7 @@ fn gpu_prove_from_trace<
         .collect();
     gpu_proof.final_fri_monomials = final_fri_monomials;
 
-    Ok((gpu_proof))
+    Ok(gpu_proof)
 }
 
 pub struct GpuProof<A: GoodAllocator> {
@@ -1181,8 +1174,8 @@ impl<A: GoodAllocator> GpuProof<A> {
             fri_lde_factor,
             merkle_tree_cap_size,
             fri_folding_schedule,
-            security_level,
-            pow_bits,
+            security_level: _,
+            pow_bits: _,
         } = proof_config.clone();
 
         assert!(
@@ -1331,7 +1324,7 @@ impl<A: GoodAllocator> Into<Proof<F, DefaultTreeHasher, EXT>> for GpuProof<A> {
             quotient_oracle_cap,
             quotient_all_leaf_elems,
             quotient_all_proofs,
-            setup_oracle_cap,
+            setup_oracle_cap: _,
             setup_all_leaf_elems,
             setup_all_proofs,
             fri_base_oracle_cap,
@@ -1506,7 +1499,7 @@ fn construct_single_query_from_flattened_batch_sources(
         domain_size,
     );
 
-    let mut query: OracleQuery<F, DefaultTreeHasher> = OracleQuery {
+    let query: OracleQuery<F, DefaultTreeHasher> = OracleQuery {
         leaf_elements,
         proof,
     };
@@ -1586,7 +1579,7 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
     quotient_holder: &mut QuotientCache<'a>,
     z: EF,
     z_omega: EF,
-    lde_degree: usize,
+    _lde_degree: usize,
 ) -> CudaResult<(Vec<EF, A>, Vec<EF, A>, Vec<EF, A>)> {
     // all polynomials should be opened at "z"
     // additionally, copy permutation polynomial should be opened at "z*w"
@@ -1657,7 +1650,7 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         num_permutation_cols + num_constant_cols + num_table_cols
     );
     let num_partial_product_poyls = partial_products.len();
-    let num_lookup_polys = lookup_a_polys.len() + lookup_b_polys.len();
+    let _num_lookup_polys = lookup_a_polys.len() + lookup_b_polys.len();
     assert_eq!(argument_evals_at_z.len(), argument_holder.num_polys());
     // decompose storage into sub polynomials
     let mut trace_evals_at_z_iter = trace_evals_at_z;
@@ -1677,10 +1670,10 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
 
     let (copy_permutation_evals_at_z, lookup_evals_at_z) =
         argument_evals_at_z.split_at(1 + num_partial_product_poyls);
-    let num_trace_polys = trace_holder.num_polys();
-    let num_setup_polys = setup_holder.num_polys();
-    let num_argument_polys = argument_holder.num_polys();
-    let num_quotient_polys = quotient_holder.num_polys();
+    let _num_trace_polys = trace_holder.num_polys();
+    let _num_setup_polys = setup_holder.num_polys();
+    let _num_argument_polys = argument_holder.num_polys();
+    let _num_quotient_polys = quotient_holder.num_polys();
     let num_all_polys_at_z = trace_holder.num_polys()
         + setup_holder.num_polys()
         + argument_holder.num_polys()
@@ -1756,7 +1749,7 @@ fn compute_deep_quotiening_over_coset(
     argument_polys: &ArgumentPolynomials<CosetEvaluations>,
     quotient_poly_constraints: &GenericComplexPolynomialStorage<CosetEvaluations>,
     roots: Poly<CosetEvaluations>,
-    coset_idx: usize,
+    _coset_idx: usize,
     evaluations_at_z: &DVec<EF>,
     evaluations_at_z_omega: &DVec<EF>,
     evaluations_at_zero: &Option<DVec<EF>>,
@@ -1801,7 +1794,7 @@ fn compute_deep_quotiening_over_coset(
 
     let num_public_inputs: usize = public_input_opening_tuples
         .iter()
-        .map(|(open_at, set)| set.len())
+        .map(|(_open_at, set)| set.len())
         .sum();
 
     deep_quotient_except_public_inputs(
@@ -1849,7 +1842,7 @@ fn compute_deep_quotiening_over_coset(
         denom_at_point_ext
             .c0
             .storage
-            .copy_from_device_slice(&denom_at_point.storage.as_ref());
+            .copy_from_device_slice(&denom_at_point.storage.as_ref())?;
         quotient_for_row.mul_assign(&denom_at_point_ext)?;
         quotient.add_assign(&quotient_for_row)?;
     }

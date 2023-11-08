@@ -6,7 +6,6 @@ use boojum::{
         oracle::TreeHasher,
     },
     fft::bitreverse_enumeration_inplace,
-    field::{FieldExtension, U64Representable},
     worker::Worker,
 };
 
@@ -93,7 +92,7 @@ impl TreeQuery for FRIOracle {
             }
             result.push(node_hash);
 
-            layer_start += (num_leafs * NUM_EL_PER_HASH);
+            layer_start += num_leafs * NUM_EL_PER_HASH;
             num_leafs >>= 1;
             tree_idx >>= 1;
         }
@@ -240,6 +239,7 @@ impl CodeWord {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new(c0: DVec<F>, c1: DVec<F>, blowup_factor: usize) -> CudaResult<Self> {
         assert_eq!(c0.len(), c1.len());
         let len = c0.len();
@@ -431,7 +431,7 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     let mut intermediate_codewords = vec![];
     let mut prev_code_word = &base_code_word;
 
-    for (layer_idx, log_schedule) in folding_schedule.iter().cloned().enumerate() {
+    for (_layer_idx, log_schedule) in folding_schedule.iter().cloned().enumerate() {
         let num_elems_per_leaf = 1 << log_schedule;
         let num_layers_to_skip = log_schedule;
 
@@ -471,7 +471,7 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     let last_code_word = intermediate_codewords.pop().unwrap();
     let last_code_len = last_code_word.length();
     dbg!(last_code_word.length().trailing_zeros());
-    let mut last_code_word_flattened = last_code_word.storage.to_vec_in(A::default())?;
+    let last_code_word_flattened = last_code_word.storage.to_vec_in(A::default())?;
     // FIXME: we can still construct monomials on the device for better stream handling
     synchronize_streams()?;
     assert_eq!(last_code_word_flattened.len(), 2 * last_code_len);
@@ -481,7 +481,7 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     bitreverse_enumeration_inplace(&mut last_c0);
     bitreverse_enumeration_inplace(&mut last_c1);
 
-    let mut last_coset_inverse = operator.coset_inverse.clone();
+    let last_coset_inverse = operator.coset_inverse.clone();
 
     let coset = last_coset_inverse.inverse().unwrap();
     // IFFT our presumable LDE of some low degree poly

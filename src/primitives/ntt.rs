@@ -190,6 +190,7 @@ pub fn coset_fft(coeffs: &mut [F], coset_idx: usize, lde_degree: usize) -> CudaR
         stream,
     )
 }
+#[allow(dead_code)]
 pub fn coset_fft_into(
     coeffs: &[F],
     result: &mut [F],
@@ -221,6 +222,7 @@ pub fn coset_fft_into(
         stream,
     )
 }
+#[allow(dead_code)]
 pub fn batch_coset_fft(
     coeffs: &mut [F],
     coset_idx: usize,

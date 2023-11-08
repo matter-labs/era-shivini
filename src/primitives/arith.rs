@@ -274,6 +274,7 @@ pub fn evaluate_ext_at_ext(values_c0: &[F], values_c1: &[F], point: &DExt) -> Cu
     Ok(result)
 }
 
+#[allow(dead_code)]
 pub fn fold(
     c0: &[F],
     c1: &[F],
@@ -359,7 +360,7 @@ pub fn fold_flattened(src: &[F], dst: &mut [F], coset_inv: F, challenge: &DExt) 
         DeviceVariable::from_ref(&d_challenge[0])
     };
 
-    let mut result: DVec<F> = dvec!(2 * fold_size);
+    let _result: DVec<F> = dvec!(2 * fold_size);
     let result_ref = unsafe {
         let result = DeviceSlice::from_mut_slice(dst);
         result.transmute_mut()
@@ -369,7 +370,6 @@ pub fn fold_flattened(src: &[F], dst: &mut [F], coset_inv: F, challenge: &DExt) 
 
     Ok(())
 }
-
 
 pub fn distribute_powers(values: &mut [F], base: &DF) -> CudaResult<()> {
     assert!(values.len().is_power_of_two());
@@ -506,7 +506,7 @@ fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl, A: GoodAllocator>
     let (partial_reduce_temp_elems, final_cub_reduce_temp_bytes) =
         boojum_cuda::barycentric::get_batch_eval_temp_storage_sizes::<E>(&values_matrix).unwrap();
 
-    let mut temp_storage_partial_reduce: DVec<EF, StaticDeviceAllocator> =
+    let temp_storage_partial_reduce: DVec<EF, StaticDeviceAllocator> =
         dvec!(partial_reduce_temp_elems);
 
     let mut temp_storage_partial_reduce = unsafe {

@@ -244,6 +244,7 @@ impl GenericSetupStorage<LagrangeBasis> {
         Ok(storage)
     }
 
+    #[allow(dead_code)]
     pub fn from_host_values<
         PP: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     >(
@@ -454,6 +455,7 @@ impl SetupCache {
         return Ok(self.cosets[coset_idx].as_ref().unwrap());
     }
 
+    #[allow(dead_code)]
     pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         coset_idx: usize,
@@ -498,6 +500,7 @@ impl SetupCache {
         )
     }
 
+    #[allow(dead_code)]
     pub fn layout(&self) -> SetupLayout {
         self.monomials.layout.clone()
     }
