@@ -174,7 +174,7 @@ pub fn multi_polys_as_single_slice<'a, P: PolyForm>(polys: &[Poly<'a, P>]) -> &'
     if polys.is_empty() {
         return &[];
     };
-    assert_adjacent(polys);
+    assert_adjacent_base(polys);
     unsafe {
         let len = polys.len() * polys[0].domain_size();
         std::slice::from_raw_parts(polys[0].storage.as_ref().as_ptr(), len)

@@ -31,22 +31,22 @@ impl PrecomputedBasisForBarycentric {
     }
 }
 
-pub(crate) fn batch_barycentric_evaluate_base<S: AsSingleSlice>(
+pub(crate) fn batch_barycentric_evaluate_base<S: AsSingleSlice, A: GoodAllocator>(
     source: &S,
     bases: &PrecomputedBasisForBarycentric,
     domain_size: usize,
     num_polys: usize,
-) -> CudaResult<Vec<EF>> {
+) -> CudaResult<Vec<EF, A>> {
     let source = source.as_single_slice();
     assert_eq!(source.len(), num_polys * domain_size);
     arith::barycentric_evaluate_base_at_ext(source, &bases.bases, domain_size, num_polys)
 }
-pub(crate) fn batch_barycentric_evaluate_ext<S: AsSingleSlice>(
+pub(crate) fn batch_barycentric_evaluate_ext<S: AsSingleSlice, A: GoodAllocator>(
     source: &S,
     bases: &PrecomputedBasisForBarycentric,
     domain_size: usize,
     num_polys: usize,
-) -> CudaResult<Vec<EF>> {
+) -> CudaResult<Vec<EF, A>> {
     let source = source.as_single_slice();
     assert_eq!(source.len(), 2 * num_polys * domain_size);
     arith::barycentric_evaluate_ext_at_ext(source, &bases.bases, domain_size, num_polys)
@@ -251,7 +251,7 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
 
     pub fn zero(domain_size: usize) -> CudaResult<Self> {
         let mut chunks = dvec!(2 * domain_size)
-            .into_owned_chunks(domain_size)
+            .into_adjacent_chunks(domain_size)
             .into_iter();
         let mut c0 = chunks.next().unwrap();
         let mut c1 = chunks.next().unwrap();
@@ -264,11 +264,9 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
             c1: Poly::from(c1),
         })
     }
-
-    #[allow(dead_code)]
     pub fn one(domain_size: usize) -> CudaResult<Self> {
         let mut chunks = dvec!(2 * domain_size)
-            .into_owned_chunks(domain_size)
+            .into_adjacent_chunks(domain_size)
             .into_iter();
         let mut c0 = chunks.next().unwrap();
         let mut c1 = chunks.next().unwrap();
@@ -500,11 +498,11 @@ impl<'a> ComplexPoly<'a, MonomialBasis> {
     ) -> CudaResult<Vec<ComplexPoly<'a, MonomialBasis>>> {
         let ComplexPoly { c0, c1 } = self;
 
-        let c0_chunks = c0.storage.into_inner().into_owned_chunks(domain_size);
-        let c1_chunks = c1.storage.into_inner().into_owned_chunks(domain_size);
+        let c0_chunks = c0.storage.into_inner().into_adjacent_chunks(domain_size);
+        let c1_chunks = c1.storage.into_inner().into_adjacent_chunks(domain_size);
         let all_polys = dvec!(2 * c0_chunks.len() * domain_size);
 
-        let mut all_polys_iter = all_polys.into_owned_chunks(domain_size).into_iter();
+        let mut all_polys_iter = all_polys.into_adjacent_chunks(domain_size).into_iter();
 
         let mut chunks = vec![];
         for (c0_chunk, c1_chunk) in c0_chunks.into_iter().zip(c1_chunks.into_iter()) {
@@ -608,7 +606,7 @@ macro_rules! impl_common_complex_poly {
                 // we always want real and imaginary part to be continuous in the memory
                 // so do a copy here
                 let storage = dvec!(2 * domain_size);
-                let parts = storage.into_owned_chunks(domain_size);
+                let parts = storage.into_adjacent_chunks(domain_size);
                 assert_eq!(parts.len(), 2);
                 let mut parts = parts.into_iter();
                 let mut new_c0 = parts.next().unwrap();

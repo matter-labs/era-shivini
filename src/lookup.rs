@@ -14,7 +14,6 @@ pub fn compute_lookup_argument_over_specialized_cols(
     powers_of_gamma: &DVec<EF>,
     variables_offset: usize,
     lookup_params: LookupParameters,
-    _lde_degree: usize,
     storage: &mut GenericArgumentStorage<LagrangeBasis>,
 ) -> CudaResult<()> {
     assert!(lookup_params.is_specialized_lookup());

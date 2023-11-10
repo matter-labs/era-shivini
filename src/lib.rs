@@ -1,9 +1,9 @@
+#![allow(incomplete_features)]
 #![feature(allocator_api)]
 #![feature(array_chunks)]
 #![feature(iter_array_chunks)]
 #![feature(get_mut_unchecked)]
-#![allow(incomplete_features)]
-#![cfg_attr(feature = "zksync", feature(generic_const_exprs))]
+#![feature(generic_const_exprs)]
 mod context;
 #[cfg(test)]
 mod test;
@@ -20,11 +20,12 @@ use oracle::*;
 mod fri;
 use fri::*;
 mod pow;
+
 mod utils;
 use utils::*;
 mod primitives;
-mod virtual_allocator;
-use virtual_allocator::*;
+mod static_allocator;
+use static_allocator::*;
 mod dvec;
 use dvec::*;
 mod constraint_evaluation;
@@ -32,8 +33,6 @@ mod copy_permutation;
 pub mod cs;
 mod data_structures;
 mod lookup;
-// "pub mod poly"
-// would suppress "function xyz is never used" warnings from poly.rs, if desired.
 mod poly;
 mod traits;
 use constraint_evaluation::*;
@@ -48,6 +47,7 @@ pub mod synthesis_utils;
 
 use quotient::*;
 type EF = ExtensionField<F, 2, EXT>;
+
 use std::alloc::Global;
 use std::slice::Chunks;
 
@@ -62,7 +62,7 @@ use primitives::tree;
 
 type DefaultTranscript = GoldilocksPoisedon2Transcript;
 type DefaultTreeHasher = GoldilocksPoseidon2Sponge<AbsorptionModeOverwrite>;
-
+use boojum::cs::traits::GoodAllocator;
 pub use context::ProverContext;
 pub use prover::{gpu_prove, gpu_prove_from_external_witness_data};
 #[cfg(feature = "recompute")]
