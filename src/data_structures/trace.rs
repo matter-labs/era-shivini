@@ -12,6 +12,7 @@ use boojum::{
     field::U64Representable,
     worker::Worker,
 };
+use std::ops::Deref;
 use std::rc::Rc;
 
 use crate::{
@@ -809,7 +810,7 @@ impl TraceCache {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             leaf_sources.num_polys(),
             oracle_data,
             oracle_data.cap_size,

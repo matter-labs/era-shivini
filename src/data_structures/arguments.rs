@@ -1,4 +1,5 @@
 use boojum::cs::{implementations::proof::OracleQuery, oracle::TreeHasher, LookupParameters};
+use std::ops::Deref;
 use std::rc::Rc;
 
 use super::*;
@@ -427,7 +428,7 @@ impl<'a> ArgumentCache<'a> {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             num_polys,
             oracle_data,
             oracle_data.cap_size,
@@ -574,7 +575,7 @@ impl<'a> QuotientCache<'a> {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             num_polys,
             oracle_data,
             oracle_data.cap_size,

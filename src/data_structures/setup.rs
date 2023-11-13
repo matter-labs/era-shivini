@@ -2,6 +2,7 @@ use boojum::cs::{
     implementations::{polynomial_storage::SetupBaseStorage, proof::OracleQuery},
     oracle::TreeHasher,
 };
+use std::ops::Deref;
 use std::rc::Rc;
 
 use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
@@ -486,7 +487,7 @@ impl SetupCache {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             leaf_sources.num_polys(),
             oracle_data,
             oracle_data.cap_size,
