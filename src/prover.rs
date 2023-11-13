@@ -1090,6 +1090,14 @@ fn gpu_prove_from_trace<
 
     synchronize_streams()?;
     println!("FRI Queries are done {:?}", time.elapsed());
+    #[cfg(feature = "allocator_stats")]
+    unsafe {
+        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
+        dbg!(_SMALL_DEVICE_ALLOCATOR
+            .as_ref()
+            .unwrap()
+            .get_allocation_stats());
+    }
 
     gpu_proof.public_inputs = public_inputs;
     gpu_proof.witness_oracle_cap = trace_tree_cap;
