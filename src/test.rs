@@ -1190,6 +1190,51 @@ mod zksync {
     #[serial]
     #[test]
     #[ignore]
+    #[should_panic]
+    fn test_public_input_placeholder_fail() {
+        let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+        let worker = Worker::new();
+        let proof_config = init_proof_cfg();
+        let (setup_base, _, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+            &worker,
+            proof_config.fri_lde_factor,
+            proof_config.merkle_tree_cap_size,
+        );
+        let domain_size = setup_cs.max_trace_len;
+        let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let mut witness = proving_cs.materialize_witness_vec();
+        let mut gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+            setup_base.clone(),
+            clone_reference_tree(&setup_tree),
+            vars_hint.clone(),
+            wits_hint.clone(),
+            &worker,
+        )
+        .expect("gpu setup");
+        witness.public_inputs_locations = vec![(0, 0)];
+        gpu_setup.variables_hint[0][0] = 1 << 31;
+        let _ = gpu_prove_from_external_witness_data::<
+            _,
+            DefaultTranscript,
+            DefaultTreeHasher,
+            NoPow,
+            Global,
+        >(
+            &proving_cs,
+            &witness,
+            proof_config.clone(),
+            &gpu_setup,
+            &vk,
+            (),
+            &worker,
+        )
+        .expect("gpu proof");
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
     fn test_reference_proof_for_circuit() {
         let circuit = get_circuit_from_env();
         println!(
