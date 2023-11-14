@@ -1,4 +1,6 @@
 use boojum::cs::{implementations::proof::OracleQuery, oracle::TreeHasher, LookupParameters};
+use std::ops::Deref;
+use std::rc::Rc;
 
 use super::*;
 
@@ -303,8 +305,7 @@ impl<'a> LeafSourceQuery for ArgumentPolynomials<'a, CosetEvaluations> {
 
 pub struct ArgumentCache<'a> {
     monomials: GenericArgumentStorage<'a, MonomialBasis>,
-    cosets: Vec<Option<GenericArgumentStorage<'a, CosetEvaluations>>>,
-    tmp_coset: GenericArgumentStorage<'a, CosetEvaluations>,
+    cosets: Vec<Option<Rc<GenericArgumentStorage<'a, CosetEvaluations>>>>,
     fri_lde_degree: usize,
     used_lde_degree: usize,
 }
@@ -318,18 +319,11 @@ impl<'a> ArgumentCache<'a> {
         assert!(fri_lde_degree.is_power_of_two());
         assert!(used_lde_degree.is_power_of_two());
 
-        let mut cosets = Vec::with_capacity(fri_lde_degree);
-        for _ in 0..fri_lde_degree {
-            cosets.push(None);
-        }
-
-        let tmp_coset =
-            GenericArgumentStorage::allocate(monomials.layout.clone(), monomials.domain_size())?;
+        let cosets = vec![None; fri_lde_degree];
 
         Ok(Self {
             monomials,
             cosets,
-            tmp_coset,
             fri_lde_degree,
             used_lde_degree,
         })
@@ -370,13 +364,17 @@ impl<'a> ArgumentCache<'a> {
     pub fn get_or_compute_coset_evals(
         &mut self,
         coset_idx: usize,
-    ) -> CudaResult<&GenericArgumentStorage<CosetEvaluations>> {
+    ) -> CudaResult<Rc<GenericArgumentStorage<CosetEvaluations>>> {
         assert!(coset_idx < self.used_lde_degree);
 
         if REMEMBER_COSETS == false || coset_idx >= self.fri_lde_degree {
+            let mut tmp_coset = GenericArgumentStorage::allocate(
+                self.monomials.layout.clone(),
+                self.monomials.domain_size(),
+            )?;
             self.monomials
-                .into_coset_eval(coset_idx, self.used_lde_degree, &mut self.tmp_coset)?;
-            return Ok(&self.tmp_coset);
+                .into_coset_eval(coset_idx, self.used_lde_degree, &mut tmp_coset)?;
+            return Ok(Rc::new(tmp_coset));
         }
 
         if self.cosets[coset_idx].is_none() {
@@ -389,10 +387,10 @@ impl<'a> ArgumentCache<'a> {
                 self.used_lde_degree,
                 &mut current_storage,
             )?;
-            self.cosets[coset_idx] = Some(current_storage);
+            self.cosets[coset_idx] = Some(Rc::new(current_storage));
         }
 
-        return Ok(self.cosets[coset_idx].as_ref().unwrap());
+        return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
     }
 
     #[allow(dead_code)]
@@ -430,7 +428,7 @@ impl<'a> ArgumentCache<'a> {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             num_polys,
             oracle_data,
             oracle_data.cap_size,
@@ -453,8 +451,7 @@ impl<'a> ArgumentCache<'a> {
 
 pub struct QuotientCache<'a> {
     monomials: GenericComplexPolynomialStorage<'a, MonomialBasis>,
-    cosets: Vec<Option<GenericComplexPolynomialStorage<'a, CosetEvaluations>>>,
-    tmp_coset: GenericComplexPolynomialStorage<'a, CosetEvaluations>,
+    cosets: Vec<Option<Rc<GenericComplexPolynomialStorage<'a, CosetEvaluations>>>>,
     fri_lde_degree: usize,
     used_lde_degree: usize,
 }
@@ -468,20 +465,11 @@ impl<'a> QuotientCache<'a> {
         assert!(fri_lde_degree.is_power_of_two());
         assert!(used_lde_degree.is_power_of_two());
 
-        let mut cosets = Vec::with_capacity(fri_lde_degree);
-        for _ in 0..fri_lde_degree {
-            cosets.push(None);
-        }
-
-        let tmp_coset = GenericComplexPolynomialStorage::allocate(
-            monomials.num_polys(),
-            monomials.domain_size(),
-        )?;
+        let cosets = vec![None; fri_lde_degree];
 
         Ok(Self {
             monomials,
             cosets,
-            tmp_coset,
             fri_lde_degree,
             used_lde_degree,
         })
@@ -523,13 +511,17 @@ impl<'a> QuotientCache<'a> {
     pub fn get_or_compute_coset_evals(
         &mut self,
         coset_idx: usize,
-    ) -> CudaResult<&GenericComplexPolynomialStorage<'a, CosetEvaluations>> {
+    ) -> CudaResult<Rc<GenericComplexPolynomialStorage<'a, CosetEvaluations>>> {
         assert!(coset_idx < self.used_lde_degree);
 
         if REMEMBER_COSETS == false || coset_idx >= self.fri_lde_degree {
+            let mut tmp_coset = GenericComplexPolynomialStorage::allocate(
+                self.monomials.num_polys(),
+                self.monomials.domain_size(),
+            )?;
             self.monomials
-                .into_coset_eval(coset_idx, self.used_lde_degree, &mut self.tmp_coset)?;
-            return Ok(&self.tmp_coset);
+                .into_coset_eval(coset_idx, self.used_lde_degree, &mut tmp_coset)?;
+            return Ok(Rc::new(tmp_coset));
         }
 
         if self.cosets[coset_idx].is_none() {
@@ -542,10 +534,10 @@ impl<'a> QuotientCache<'a> {
                 self.used_lde_degree,
                 &mut current_storage,
             )?;
-            self.cosets[coset_idx] = Some(current_storage);
+            self.cosets[coset_idx] = Some(Rc::new(current_storage));
         }
 
-        return Ok(self.cosets[coset_idx].as_ref().unwrap());
+        return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
     }
 
     #[allow(dead_code)]
@@ -559,7 +551,7 @@ impl<'a> QuotientCache<'a> {
     ) -> CudaResult<OracleQuery<F, H>> {
         let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
         tree_holder.get_quotient_subtrees().query(
-            leaf_sources,
+            leaf_sources.as_ref(),
             coset_idx,
             fri_lde_degree,
             row_idx,
@@ -583,7 +575,7 @@ impl<'a> QuotientCache<'a> {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             num_polys,
             oracle_data,
             oracle_data.cap_size,

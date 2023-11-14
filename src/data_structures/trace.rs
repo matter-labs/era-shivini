@@ -12,6 +12,8 @@ use boojum::{
     field::U64Representable,
     worker::Worker,
 };
+use std::ops::Deref;
+use std::rc::Rc;
 
 use crate::{
     cs::{variable_assignment, GpuSetup},
@@ -695,8 +697,7 @@ impl AsSingleSlice for &GenericTraceStorage<CosetEvaluations> {
 // - or keeps coset evals
 pub struct TraceCache {
     monomials: GenericTraceStorage<MonomialBasis>,
-    cosets: Vec<Option<GenericTraceStorage<CosetEvaluations>>>,
-    tmp_coset: GenericTraceStorage<CosetEvaluations>,
+    cosets: Vec<Option<Rc<GenericTraceStorage<CosetEvaluations>>>>,
     fri_lde_degree: usize,
     used_lde_degree: usize,
 }
@@ -710,14 +711,9 @@ impl TraceCache {
         assert!(fri_lde_degree.is_power_of_two());
         assert!(used_lde_degree.is_power_of_two());
         let cosets = vec![None; fri_lde_degree];
-        let tmp_coset = GenericTraceStorage::allocate(
-            monomial_trace.domain_size(),
-            monomial_trace.layout.clone(),
-        )?;
         Ok(Self {
             monomials: monomial_trace,
-            cosets: cosets,
-            tmp_coset,
+            cosets,
             fri_lde_degree,
             used_lde_degree,
         })
@@ -751,13 +747,17 @@ impl TraceCache {
     pub fn get_or_compute_coset_evals(
         &mut self,
         coset_idx: usize,
-    ) -> CudaResult<&GenericTraceStorage<CosetEvaluations>> {
+    ) -> CudaResult<Rc<GenericTraceStorage<CosetEvaluations>>> {
         assert!(coset_idx < self.used_lde_degree);
 
         if REMEMBER_COSETS == false || coset_idx >= self.fri_lde_degree {
+            let mut tmp_coset = GenericTraceStorage::allocate(
+                self.monomials.domain_size(),
+                self.monomials.layout.clone(),
+            )?;
             self.monomials
-                .into_coset_eval(coset_idx, self.used_lde_degree, &mut self.tmp_coset)?;
-            return Ok(&self.tmp_coset);
+                .into_coset_eval(coset_idx, self.used_lde_degree, &mut tmp_coset)?;
+            return Ok(Rc::new(tmp_coset));
         }
 
         if self.cosets[coset_idx].is_none() {
@@ -770,10 +770,10 @@ impl TraceCache {
                 self.used_lde_degree,
                 &mut current_storage,
             )?;
-            self.cosets[coset_idx] = Some(current_storage);
+            self.cosets[coset_idx] = Some(Rc::new(current_storage));
         }
 
-        return Ok(self.cosets[coset_idx].as_ref().unwrap());
+        return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
     }
 
     #[allow(dead_code)]
@@ -810,7 +810,7 @@ impl TraceCache {
         batch_query::<H, A>(
             indexes,
             num_queries,
-            leaf_sources,
+            leaf_sources.deref(),
             leaf_sources.num_polys(),
             oracle_data,
             oracle_data.cap_size,

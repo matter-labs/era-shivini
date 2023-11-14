@@ -847,15 +847,12 @@ fn gpu_prove_from_trace<
     let z = h_z.clone().into();
     let z_omega = h_z_omega.clone().into();
     for coset_idx in 0..fri_lde_degree {
-        let trace_polys = trace_holder
-            .get_or_compute_coset_evals(coset_idx)?
-            .as_polynomials();
-        let setup_polys = setup_holder
-            .get_or_compute_coset_evals(coset_idx)?
-            .as_polynomials();
-        let argument_polys = argument_holder
-            .get_or_compute_coset_evals(coset_idx)?
-            .as_polynomials();
+        let trace_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
+        let trace_polys = trace_values.as_polynomials();
+        let setup_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
+        let setup_polys = setup_values.as_polynomials();
+        let argument_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;
+        let argument_polys = argument_values.as_polynomials();
         let quotient_polys = quotient_holder.get_or_compute_coset_evals(coset_idx)?;
 
         let coset_omegas = compute_omega_values_for_coset(coset_idx, domain_size, used_lde_degree)?;
@@ -1093,6 +1090,14 @@ fn gpu_prove_from_trace<
 
     synchronize_streams()?;
     println!("FRI Queries are done {:?}", time.elapsed());
+    #[cfg(feature = "allocator_stats")]
+    unsafe {
+        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
+        dbg!(_SMALL_DEVICE_ALLOCATOR
+            .as_ref()
+            .unwrap()
+            .get_allocation_stats());
+    }
 
     gpu_proof.public_inputs = public_inputs;
     gpu_proof.witness_oracle_cap = trace_tree_cap;

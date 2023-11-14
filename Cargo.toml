@@ -37,3 +37,4 @@ serial_test = "^2"
 default = ["zksync"]
 zksync = ["circuit_definitions"]
 recompute = []
+allocator_stats = []

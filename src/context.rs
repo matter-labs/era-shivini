@@ -2,7 +2,7 @@ use super::*;
 
 pub struct ProverContext;
 
-pub const ZKSYNC_DEFAULT_TRACE_LOG_LENGTH: usize = 19;
+pub const ZKSYNC_DEFAULT_TRACE_LOG_LENGTH: usize = 20;
 
 impl ProverContext {
     pub fn create() -> CudaResult<Self> {
