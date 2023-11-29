@@ -1035,7 +1035,7 @@ mod zksync {
     #[ignore]
     fn compare_proofs_for_single_zksync_circuit_in_single_shot() {
         let circuit = get_circuit_from_env();
-        let _ctx = ProverContext::create_14gb().expect("gpu prover context");
+        let _ctx = ProverContext::create_limited().expect("gpu prover context");
 
         println!(
             "{} {}",

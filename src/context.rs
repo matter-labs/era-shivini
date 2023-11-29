@@ -25,7 +25,7 @@ impl ProverContext {
         let device_alloc = StaticDeviceAllocator::init_all(block_size)?;
 
         let small_host_alloc = SmallStaticHostAllocator::init()?;
-        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+        let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
 
         unsafe {
             _CUDA_CONTEXT = Some(cuda_ctx);
@@ -42,7 +42,7 @@ impl ProverContext {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn create_14gb_dev(block_size: usize) -> CudaResult<Self> {
+    pub(crate) fn create_limited_dev(block_size: usize) -> CudaResult<Self> {
         unsafe {
             assert!(_CUDA_CONTEXT.is_none());
             assert!(_DEVICE_ALLOCATOR.is_none());
@@ -58,10 +58,9 @@ impl ProverContext {
 
         // grab small slice then consume everything
         let small_device_alloc = SmallStaticDeviceAllocator::init()?;
-        let device_alloc = StaticDeviceAllocator::init_14gb(block_size)?;
-        println!("allocated 14gb on device");
+        let device_alloc = StaticDeviceAllocator::init_limited(block_size)?;
         let small_host_alloc = SmallStaticHostAllocator::init()?;
-        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+        let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
 
         unsafe {
             _CUDA_CONTEXT = Some(cuda_ctx);
@@ -77,7 +76,7 @@ impl ProverContext {
         Ok(Self {})
     }
 
-    pub fn create_14gb() -> CudaResult<Self> {
+    pub fn create_limited() -> CudaResult<Self> {
         unsafe {
             assert!(_CUDA_CONTEXT.is_none());
             assert!(_DEVICE_ALLOCATOR.is_none());
@@ -94,10 +93,9 @@ impl ProverContext {
 
         // grab small slice then consume everything
         let small_device_alloc = SmallStaticDeviceAllocator::init()?;
-        let device_alloc = StaticDeviceAllocator::init_14gb(block_size)?;
-        println!("allocated 14gb on device");
+        let device_alloc = StaticDeviceAllocator::init_limited(block_size)?;
         let small_host_alloc = SmallStaticHostAllocator::init()?;
-        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+        let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
 
         unsafe {
             _CUDA_CONTEXT = Some(cuda_ctx);
@@ -124,7 +122,7 @@ impl ProverContext {
         let device_alloc = StaticDeviceAllocator::init_all(block_size)?;
 
         let small_host_alloc = SmallStaticHostAllocator::init()?;
-        let host_alloc = StaticHostAllocator::init(block_size, 1 << 8)?;
+        let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
 
         unsafe {
             _CUDA_CONTEXT = Some(cuda_ctx);

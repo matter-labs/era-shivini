@@ -19,7 +19,7 @@ pub struct StaticHostAllocator {
 
 impl Default for StaticHostAllocator {
     fn default() -> Self {
-        let _domain_size = 1 << 20;
+        let _domain_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
         Self::init(0, 0).unwrap() // TODO
     }
 }
@@ -48,7 +48,7 @@ impl StaticHostAllocator {
     }
 
     pub fn init(num_blocks: usize, block_size: usize) -> CudaResult<Self> {
-        assert!(num_blocks > 32);
+        assert_ne!(num_blocks, 0);
         assert!(block_size.is_power_of_two());
         let memory_size = num_blocks * block_size;
         let memory_size_in_bytes = memory_size * std::mem::size_of::<F>();
@@ -59,11 +59,7 @@ impl StaticHostAllocator {
                 &format!("failed to allocate {} bytes", memory_size_in_bytes),
             );
 
-        println!(
-            "allocated {} bytes({}gb) on device on host",
-            memory_size_in_bytes,
-            memory_size_in_bytes / 0x40000000
-        );
+        println!("allocated {memory_size_in_bytes} bytes on host");
 
         let alloc = StaticHostAllocator {
             memory: Arc::new(memory),
@@ -205,10 +201,10 @@ pub struct SmallStaticHostAllocator {
 
 impl SmallStaticHostAllocator {
     pub fn init() -> CudaResult<Self> {
+        const NUM_BLOCKS: usize = 1 << 8;
         // cuda requires alignment to be  multiple of 32 goldilocks elems
-        let block_size = 32;
-        let num_blocks = 1 << 20; // <1gb
-        let inner = StaticHostAllocator::init(num_blocks, block_size)?;
+        const BLOCK_SIZE: usize = 32;
+        let inner = StaticHostAllocator::init(NUM_BLOCKS, BLOCK_SIZE)?;
         Ok(Self { inner })
     }
 

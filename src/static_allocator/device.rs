@@ -1,4 +1,4 @@
-use cudart::memory::DeviceAllocation;
+use cudart::memory::{memory_get_info, DeviceAllocation};
 
 use super::*;
 use derivative::*;
@@ -10,6 +10,13 @@ use std::sync::Arc;
 
 #[cfg(feature = "allocator_stats")]
 use std::sync::atomic::AtomicUsize;
+
+pub const FREE_MEMORY_SLACK: usize = 1 << 23; // 8 MB
+#[cfg(feature = "recompute")]
+pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1340 + 32;
+#[cfg(not(feature = "recompute"))]
+pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1695 + 64;
+pub const SMALL_ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 27 + 16;
 
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
@@ -62,7 +69,7 @@ impl StaticDeviceAllocator {
     }
 
     pub fn init(num_blocks: usize, block_size: usize) -> CudaResult<Self> {
-        assert!(num_blocks > 32);
+        assert_ne!(num_blocks, 0);
         assert!(block_size.is_power_of_two());
         let memory_size = num_blocks * block_size;
         let memory_size_in_bytes = memory_size * std::mem::size_of::<F>();
@@ -72,6 +79,8 @@ impl StaticDeviceAllocator {
             "failed to allocate {} bytes",
             memory_size_in_bytes
         ));
+
+        println!("allocated {memory_size_in_bytes} bytes on device");
 
         let alloc = StaticDeviceAllocator {
             memory: Arc::new(memory),
@@ -86,34 +95,28 @@ impl StaticDeviceAllocator {
     }
 
     pub fn init_all(block_size: usize) -> CudaResult<Self> {
-        use cudart::memory::memory_get_info;
-
         let block_size_in_bytes = block_size * std::mem::size_of::<F>();
         let (memory_size_in_bytes, _total) = memory_get_info().expect("get memory info");
-        let precomputed_data_in_bytes = 256 * 1024 * 1024; // precomputed data is <=256mb
-        let free_memory_size_in_bytes = memory_size_in_bytes - precomputed_data_in_bytes;
+        assert!(memory_size_in_bytes >= FREE_MEMORY_SLACK);
+        let free_memory_size_in_bytes = memory_size_in_bytes - FREE_MEMORY_SLACK;
         assert!(free_memory_size_in_bytes >= block_size);
         let num_blocks = free_memory_size_in_bytes / block_size_in_bytes;
         Self::init(num_blocks, block_size)
     }
 
-    pub fn init_14gb(block_size: usize) -> CudaResult<Self> {
-        use cudart::memory::memory_get_info;
-
-        let block_size_in_bytes = block_size * std::mem::size_of::<F>();
+    pub fn init_limited(block_size: usize) -> CudaResult<Self> {
         let (memory_size_in_bytes, _total) = memory_get_info().expect("get memory info");
-        let precomputed_data_in_bytes = 256 * 1024 * 1024; // precomputed data is <=256mb
-        let free_memory_size_in_bytes = memory_size_in_bytes - precomputed_data_in_bytes;
-        assert!(free_memory_size_in_bytes >= block_size);
-        let requested_memory_size_in_bytes = 14usize * 0x40000000; // 16gb
+        assert!(memory_size_in_bytes >= FREE_MEMORY_SLACK);
+        let free_memory_size_in_bytes = memory_size_in_bytes - FREE_MEMORY_SLACK;
+        let block_size_in_bytes = block_size * std::mem::size_of::<F>();
+        let requested_memory_size_in_bytes = ALLOCATOR_LIMITED_BLOCKS_COUNT * block_size_in_bytes;
         assert!(
             requested_memory_size_in_bytes <= free_memory_size_in_bytes,
             "requested memory {}bytes, free memory {} bytes",
             requested_memory_size_in_bytes,
             free_memory_size_in_bytes
         );
-        let num_blocks = requested_memory_size_in_bytes / block_size_in_bytes;
-        Self::init(num_blocks, block_size)
+        Self::init(ALLOCATOR_LIMITED_BLOCKS_COUNT, block_size)
     }
 
     fn find_free_block(&self) -> Option<usize> {
@@ -269,9 +272,8 @@ pub struct SmallStaticDeviceAllocator {
 impl SmallStaticDeviceAllocator {
     pub fn init() -> CudaResult<Self> {
         // cuda requires alignment to be  multiple of 32 goldilocks elems
-        let block_size = 32;
-        let num_blocks = 1 << 10; // 256 KB
-        let inner = StaticDeviceAllocator::init(num_blocks, block_size)?;
+        const BLOCK_SIZE: usize = 32;
+        let inner = StaticDeviceAllocator::init(SMALL_ALLOCATOR_LIMITED_BLOCKS_COUNT, BLOCK_SIZE)?;
         Ok(Self { inner })
     }
 
