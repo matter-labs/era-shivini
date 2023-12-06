@@ -40,6 +40,8 @@ use boojum::{
 
 use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 
+use nvtx::{range_push, range_pop};
+
 #[allow(dead_code)]
 pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
 type P = F;
@@ -68,6 +70,7 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
         &worker,
     )
     .unwrap();
+    let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).unwrap();
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
@@ -79,6 +82,7 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
             &mut proving_cs,
             prover_config,
             &gpu_setup,
+            &gpu_raw_setup,
             &vk,
             (),
             &worker,
@@ -329,6 +333,7 @@ fn test_proof_comparison_for_sha256() {
         &worker,
     )
     .unwrap();
+    let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).unwrap();
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
@@ -337,6 +342,7 @@ fn test_proof_comparison_for_sha256() {
             &mut proving_cs,
             prover_config,
             &gpu_setup,
+            &gpu_raw_setup,
             &vk,
             (),
             &worker,
@@ -926,7 +932,8 @@ mod zksync {
                     vars_hint.clone(),
                     wits_hint.clone(),
                     &worker,
-                )?;
+                )?; // should we use unwrap() here?
+                let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup)?;
 
                 println!("gpu proving");
 
@@ -937,6 +944,7 @@ mod zksync {
                         &mut proving_cs,
                         proof_config,
                         &gpu_setup,
+                        &gpu_raw_setup,
                         &vk,
                         (),
                         worker,
@@ -1034,6 +1042,7 @@ mod zksync {
     #[test]
     #[ignore]
     fn compare_proofs_for_single_zksync_circuit_in_single_shot() {
+        range_push!("compare_proofs_for_single_zksync_circuit_in_single_shot");
         let circuit = get_circuit_from_env();
         let _ctx = ProverContext::create_limited().expect("gpu prover context");
 
@@ -1070,11 +1079,13 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
+        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
         let gpu_proof = {
             gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
                 &mut proving_cs,
                 proof_cfg.clone(),
                 &gpu_setup,
+                &gpu_raw_setup,
                 &vk,
                 (),
                 worker,
@@ -1103,12 +1114,16 @@ mod zksync {
         println!("proof transformation takes {:?}", start.elapsed());
         // circuit.verify_proof(&vk, &actual_proof); // TODO
         compare_proofs(&reference_proof, &actual_proof);
+
+        range_pop!();
     }
 
     #[serial]
     #[test]
     #[ignore]
     fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot() {
+        range_push!("compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot");
+
         let circuit = get_circuit_from_env();
         let _ctx = ProverContext::create().expect("gpu prover context");
 
@@ -1145,9 +1160,15 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
+        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
+
         let gpu_proof = {
+            range_push!("proving_cs.materialize_witness_vec");
             let witness = proving_cs.materialize_witness_vec();
+            range_pop!();
+            range_push!("init_cs_for_external_proving");
             let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+            range_pop!();
             gpu_prove_from_external_witness_data::<
                 _,
                 DefaultTranscript,
@@ -1159,6 +1180,24 @@ mod zksync {
                 &witness,
                 proof_cfg.clone(),
                 &gpu_setup,
+                &gpu_raw_setup,
+                &vk,
+                (),
+                worker,
+            )
+            .expect("gpu proof");
+            gpu_prove_from_external_witness_data::<
+                _,
+                DefaultTranscript,
+                DefaultTreeHasher,
+                NoPow,
+                Global,
+            >(
+                &reusable_cs,
+                &witness,
+                proof_cfg.clone(),
+                &gpu_setup,
+                &gpu_raw_setup,
                 &vk,
                 (),
                 worker,
@@ -1185,6 +1224,8 @@ mod zksync {
         let actual_proof = gpu_proof.into();
         circuit.verify_proof(&vk, &actual_proof);
         compare_proofs(&reference_proof, &actual_proof);
+
+        range_pop!();
     }
 
     #[serial]
@@ -1212,6 +1253,7 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
+        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
         witness.public_inputs_locations = vec![(0, 0)];
         gpu_setup.variables_hint[0][0] = 1 << 31;
         let _ = gpu_prove_from_external_witness_data::<
@@ -1225,6 +1267,7 @@ mod zksync {
             &witness,
             proof_config.clone(),
             &gpu_setup,
+            &gpu_raw_setup,
             &vk,
             (),
             &worker,

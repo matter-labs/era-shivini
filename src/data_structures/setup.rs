@@ -9,6 +9,8 @@ use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSet
 
 use super::*;
 
+use nvtx::{range_push, range_pop};
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SetupLayout {
     pub num_permutation_cols: usize,
@@ -105,13 +107,18 @@ impl<P: PolyForm> GenericSetupStorage<P> {
 
     #[allow(dead_code)]
     pub fn clone(&self) -> CudaResult<Self> {
+        range_push!("GenericSetupStorage::clone");
+
         let num_polys = self.num_polys();
         let domain_size = self.domain_size();
         let src = self.as_single_slice();
 
         let mut storage = GenericStorage::allocate(num_polys, domain_size)?;
         let dst = storage.as_single_slice_mut();
+        println!("\nLength of GenericSetupStorage: dst.len() {}\n", dst.len());
         mem::d2d(src, dst)?;
+
+        range_pop!();
 
         Ok(Self {
             storage,
@@ -205,6 +212,8 @@ impl GenericSetupStorage<LagrangeBasis> {
     pub fn from_gpu_setup<A: GoodAllocator>(
         setup: &GpuSetup<A>,
     ) -> CudaResult<GenericSetupStorage<LagrangeBasis>> {
+        range_push!("GenericSetupStorage::from_gpu_setup");
+
         let GpuSetup {
             constant_columns,
             lookup_tables_columns,
@@ -242,6 +251,8 @@ impl GenericSetupStorage<LagrangeBasis> {
         {
             mem::h2d(src, dst)?;
         }
+
+        range_pop!();
 
         Ok(storage)
     }

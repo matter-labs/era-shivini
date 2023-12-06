@@ -22,6 +22,8 @@ use crate::{
 
 use super::*;
 
+use nvtx::{range_push, range_pop};
+
 #[derive(Clone, Debug)]
 pub struct TraceLayout {
     pub num_variable_cols: usize,
@@ -189,6 +191,7 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     Vec<SubTree>,
     Vec<[F; 4]>,
 )> {
+    range_push!("construct_trace_storage_from_remote_witness_data");
     let num_polys = trace_layout.num_polys();
     dbg!(num_polys);
     dbg!(domain_size);
@@ -220,7 +223,9 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     // let inner_h2d_stream = CudaStream::create()?;
     let inner_h2d_stream = get_stream();
     let mut d_variable_values = dvec!(all_values.len());
+    range_push!("h2d witness_data.all_values");
     mem::h2d_on_stream(&all_values, &mut d_variable_values, &inner_h2d_stream)?;
+    range_pop!();
 
     let mut raw_storage = GenericStorage::allocate(num_polys, domain_size)?;
     let mut monomial_storage = GenericStorage::allocate(num_polys, domain_size)?;
@@ -271,7 +276,9 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
             mem::h2d_on_stream(witnesses, &mut d_witness_indexes, &inner_h2d_stream)?;
             transferred.record(&inner_h2d_stream)?;
             get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
+            range_push!("variable_assignment");
             variable_assignment(&d_witness_indexes, &d_variable_values, d_witnesses_raw)?;
+            range_pop!();
             let (_, padding) = d_witnesses_raw.split_at_mut(d_witness_indexes.len());
             if !padding.is_empty() {
                 helpers::set_zero(padding)?;
@@ -356,6 +363,8 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     let mut subtree_roots = vec![first_subtree_root, second_subtree_root];
     let trace_tree_cap = subtree_roots.compute_cap::<DefaultTreeHasher>(&mut subtrees, cap_size)?;
 
+    range_pop!();
+
     Ok((
         raw_trace_storage,
         monomial_trace_storage,
@@ -377,6 +386,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
     Vec<SubTree>,
     Vec<[F; 4]>,
 )> {
+    range_push!("construct_trace_storage_from_local_witness_data");
     let fri_lde_degree = proof_config.fri_lde_factor;
     let cap_size = proof_config.merkle_tree_cap_size;
     assert_eq!(fri_lde_degree, 2);
@@ -529,6 +539,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
         layout: trace_layout,
         form: std::marker::PhantomData,
     };
+    range_pop!();
     Ok((raw_storage, monomial_storage, subtrees, trace_tree_cap))
 }
 

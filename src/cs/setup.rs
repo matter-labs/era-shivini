@@ -14,6 +14,8 @@ use boojum::{
 use boojum_cuda::ops_complex::pack_variable_indexes;
 use cudart::slice::{CudaSlice, DeviceSlice};
 
+use nvtx::{range_push, range_pop};
+
 use super::*;
 pub(crate) const PACKED_PLACEHOLDER_BITMASK: u32 = 1 << 31;
 
@@ -104,7 +106,9 @@ pub fn transform_variable_indexes<A: GoodAllocator>(
     let num_cols = hints.len();
     assert!(num_cols > 0);
     let mut transformed_hints = Vec::with_capacity(num_cols);
+    println!("num_cols {}", num_cols);
     for col in hints.iter() {
+        println!("col.len() {}", col.len());
         assert_eq!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
         let mut new = Vec::with_capacity_in(col.len(), A::default());
         unsafe {
@@ -192,6 +196,8 @@ impl<A: GoodAllocator> GpuSetup<A> {
         witnesses_hint: DenseWitnessCopyHint,
         worker: &Worker,
     ) -> CudaResult<Self> {
+        range_push!("GpuSetup::from_setup_and_hints");
+
         assert_eq!(
             variables_hint.maps.len(),
             base_setup.copy_permutation_polys.len()
@@ -223,6 +229,8 @@ impl<A: GoodAllocator> GpuSetup<A> {
             new.extend_from_slice(P::slice_into_base_slice(&src.storage));
             lookup_tables_columns_in.push(new);
         }
+
+        range_pop!();
 
         Ok(Self {
             constant_columns: constant_cols_in,
