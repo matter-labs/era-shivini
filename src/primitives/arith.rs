@@ -1,6 +1,6 @@
 use super::*;
 
-use boojum_cuda::device_structures::{DeviceMatrix, DeviceMatrixMut};
+use boojum_cuda::device_structures::{DeviceMatrix, DeviceMatrixMut, Vectorized};
 use boojum_cuda::extension_field::VectorizedExtensionField;
 // arithmetic operations
 use boojum_cuda::ops_cub::device_scan::*;
@@ -483,7 +483,7 @@ pub fn barycentric_evaluate_ext_at_ext<A: GoodAllocator>(
 }
 
 fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl, A: GoodAllocator>(
-    values: &[E::YsVec],
+    values: &[<E::Y as Vectorized>::Type],
     bases: &[F],
     domain_size: usize,
     num_polys: usize,
