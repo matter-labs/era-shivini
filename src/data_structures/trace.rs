@@ -22,7 +22,7 @@ use crate::{
 
 use super::*;
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 #[derive(Clone, Debug)]
 pub struct TraceLayout {

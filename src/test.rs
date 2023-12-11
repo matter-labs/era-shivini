@@ -40,7 +40,7 @@ use boojum::{
 
 use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 #[allow(dead_code)]
 pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
@@ -938,7 +938,8 @@ mod zksync {
                 let gpu_proof = {
                     let mut proving_cs =
                         synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-                    let mut setup_cache = SetupCache::new(&gpu_setup, &proof_config, &proving_cs).unwrap();
+                    let mut setup_cache =
+                        SetupCache::new(&gpu_setup, &proof_config, &proving_cs).unwrap();
                     gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
                         &mut proving_cs,
                         proof_config,
@@ -1078,7 +1079,8 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
-        let mut setup_cache = SetupCache::new(&gpu_setup, &proof_cfg, &proving_cs).expect("setup cache");
+        let mut setup_cache =
+            SetupCache::new(&gpu_setup, &proof_cfg, &proving_cs).expect("setup cache");
         let gpu_proof = {
             gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
                 &mut proving_cs,
@@ -1121,7 +1123,9 @@ mod zksync {
     #[test]
     #[ignore]
     fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot() {
-        range_push!("compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot");
+        range_push!(
+            "compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot"
+        );
 
         let circuit = get_circuit_from_env();
         let _ctx = ProverContext::create().expect("gpu prover context");
@@ -1168,7 +1172,8 @@ mod zksync {
             let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
             range_pop!();
             range_push!("SetupCache::new(&gpu_setup, &proof_cfg, &reusable_cs");
-            let mut setup_cache = SetupCache::new(&gpu_setup, &proof_cfg, &reusable_cs).expect("setup cache");
+            let mut setup_cache =
+                SetupCache::new(&gpu_setup, &proof_cfg, &reusable_cs).expect("setup cache");
             range_pop!();
             gpu_prove_from_external_witness_data::<
                 _,
@@ -1254,7 +1259,8 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
-        let mut setup_cache = SetupCache::new(&gpu_setup, &proof_config, &proving_cs).expect("setup cache");
+        let mut setup_cache =
+            SetupCache::new(&gpu_setup, &proof_config, &proving_cs).expect("setup cache");
         witness.public_inputs_locations = vec![(0, 0)];
         gpu_setup.variables_hint[0][0] = 1 << 31;
         let _ = gpu_prove_from_external_witness_data::<

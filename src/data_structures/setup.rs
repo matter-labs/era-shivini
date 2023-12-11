@@ -1,6 +1,9 @@
 use boojum::config::ProvingCSConfig;
 use boojum::cs::{
-    implementations::{polynomial_storage::SetupBaseStorage, prover::ProofConfig, reference_cs::CSReferenceAssembly},
+    implementations::{
+        polynomial_storage::SetupBaseStorage, prover::ProofConfig,
+        reference_cs::CSReferenceAssembly,
+    },
     oracle::TreeHasher,
 };
 use std::ops::Deref;
@@ -11,7 +14,7 @@ use crate::prover::compute_quotient_degree;
 
 use super::*;
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SetupLayout {
@@ -435,7 +438,10 @@ impl SetupCache {
         &mut self,
         cap_size: usize,
     ) -> CudaResult<(&Vec<SubTree>, &Vec<[F; 4]>)> {
-        assert_eq!(self.fri_oracles_subtrees.is_none(), self.fri_oracles_caps.is_none());
+        assert_eq!(
+            self.fri_oracles_subtrees.is_none(),
+            self.fri_oracles_caps.is_none()
+        );
         if self.fri_oracles_subtrees.is_none() {
             let fri_lde_degree = self.fri_lde_degree;
             let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
@@ -452,7 +458,8 @@ impl SetupCache {
                 setup_subtrees.push(subtree);
             }
 
-            self.fri_oracles_caps = Some(setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?);
+            self.fri_oracles_caps =
+                Some(setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?);
             self.fri_oracles_subtrees = Some(setup_subtrees);
         }
 

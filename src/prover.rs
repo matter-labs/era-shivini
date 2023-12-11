@@ -30,7 +30,7 @@ use crate::{
     cs::PACKED_PLACEHOLDER_BITMASK,
 };
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 use super::*;
 

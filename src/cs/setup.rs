@@ -14,7 +14,7 @@ use boojum::{
 use boojum_cuda::ops_complex::pack_variable_indexes;
 use cudart::slice::{CudaSlice, DeviceSlice};
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 use super::*;
 pub(crate) const PACKED_PLACEHOLDER_BITMASK: u32 = 1 << 31;
