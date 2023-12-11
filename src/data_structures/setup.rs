@@ -1,11 +1,13 @@
+use boojum::config::ProvingCSConfig;
 use boojum::cs::{
-    implementations::{polynomial_storage::SetupBaseStorage, proof::OracleQuery},
+    implementations::{polynomial_storage::SetupBaseStorage, prover::ProofConfig, reference_cs::CSReferenceAssembly},
     oracle::TreeHasher,
 };
 use std::ops::Deref;
 use std::rc::Rc;
 
 use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
+use crate::prover::compute_quotient_degree;
 
 use super::*;
 
@@ -377,26 +379,47 @@ impl GenericSetupStorage<CosetEvaluations> {
 }
 
 pub struct SetupCache {
-    monomials: GenericSetupStorage<MonomialBasis>,
+    pub evals_on_trace_domain: GenericSetupStorage<LagrangeBasis>,
+    pub monomials: GenericSetupStorage<MonomialBasis>,
     cosets: Vec<Option<Rc<GenericSetupStorage<CosetEvaluations>>>>,
-    fri_lde_degree: usize,
-    used_lde_degree: usize,
+    pub variables_hint: Option<Vec<DVec<u32>>>,
+    pub witnesses_hint: Option<Vec<DVec<u32>>>,
+    pub fri_oracles_subtrees: Option<Vec<SubTree>>,
+    pub fri_oracles_caps: Option<Vec<[F; 4]>>,
+    pub fri_lde_degree: usize,
+    pub used_lde_degree: usize,
 }
 
 impl SetupCache {
-    pub fn from_monomial(
-        monomial_setup: GenericSetupStorage<MonomialBasis>,
-        fri_lde_degree: usize,
-        used_lde_degree: usize,
+    pub fn new<
+        A: GoodAllocator,
+        P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    >(
+        setup: &GpuSetup<A>,
+        proof_config: &ProofConfig,
+        cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
     ) -> CudaResult<Self> {
+        let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+        let fri_lde_degree = proof_config.fri_lde_factor;
+        let used_lde_degree = usize::max(fri_lde_degree, quotient_degree);
+
         assert!(fri_lde_degree.is_power_of_two());
         assert!(used_lde_degree.is_power_of_two());
+
+        let evals_on_trace_domain = GenericSetupStorage::<_>::from_gpu_setup(setup)?;
+        let tmp = evals_on_trace_domain.clone()?;
+        let monomials = tmp.into_monomials()?;
 
         let cosets = vec![None; fri_lde_degree];
 
         let this = Self {
-            monomials: monomial_setup,
+            evals_on_trace_domain,
+            monomials,
             cosets,
+            variables_hint: None,
+            witnesses_hint: None,
+            fri_oracles_subtrees: None,
+            fri_oracles_caps: None,
             fri_lde_degree,
             used_lde_degree,
         };
@@ -411,24 +434,31 @@ impl SetupCache {
     pub fn commit<H: TreeHasher<F, Output = [F; 4]>>(
         &mut self,
         cap_size: usize,
-    ) -> CudaResult<(Vec<SubTree>, Vec<[F; 4]>)> {
-        let fri_lde_degree = self.fri_lde_degree;
-        let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
-        let mut setup_subtrees = vec![];
-        let mut setup_subtree_caps = vec![];
+    ) -> CudaResult<(&Vec<SubTree>, &Vec<[F; 4]>)> {
+        assert_eq!(self.fri_oracles_subtrees.is_none(), self.fri_oracles_caps.is_none());
+        if self.fri_oracles_subtrees.is_none() {
+            let fri_lde_degree = self.fri_lde_degree;
+            let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
+            let mut setup_subtrees = Vec::with_capacity(fri_lde_degree);
+            let mut setup_subtree_caps = Vec::with_capacity(fri_lde_degree);
 
-        assert_eq!(self.cosets.len(), fri_lde_degree);
+            assert_eq!(self.cosets.len(), fri_lde_degree);
 
-        for coset_idx in 0..fri_lde_degree {
-            let coset_values = self.get_or_compute_coset_evals(coset_idx)?;
-            let (subtree, subtree_cap) =
-                coset_values.build_subtree_for_coset(coset_cap_size, coset_idx)?;
-            setup_subtree_caps.push(subtree_cap);
-            setup_subtrees.push(subtree);
+            for coset_idx in 0..fri_lde_degree {
+                let coset_values = self.get_or_compute_coset_evals(coset_idx)?;
+                let (subtree, subtree_cap) =
+                    coset_values.build_subtree_for_coset(coset_cap_size, coset_idx)?;
+                setup_subtree_caps.push(subtree_cap);
+                setup_subtrees.push(subtree);
+            }
+
+            self.fri_oracles_caps = Some(setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?);
+            self.fri_oracles_subtrees = Some(setup_subtrees);
         }
 
-        let setup_tree_cap = setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?;
-        Ok((setup_subtrees, setup_tree_cap))
+        let subtrees = self.fri_oracles_subtrees.as_ref().unwrap();
+        let caps = self.fri_oracles_caps.as_ref().unwrap();
+        Ok((subtrees, caps))
     }
 
     pub fn get_or_compute_coset_evals(
@@ -464,24 +494,24 @@ impl SetupCache {
         return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
     }
 
-    #[allow(dead_code)]
-    pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
-        &mut self,
-        coset_idx: usize,
-        fri_lde_degree: usize,
-        row_idx: usize,
-        domain_size: usize,
-        tree_holder: &TreeCache,
-    ) -> CudaResult<OracleQuery<F, H>> {
-        let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
-        tree_holder.get_setup_subtrees().query(
-            &leaf_sources.as_polynomials(),
-            coset_idx,
-            fri_lde_degree,
-            row_idx,
-            domain_size,
-        )
-    }
+    // #[allow(dead_code)]
+    // pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
+    //     &mut self,
+    //     coset_idx: usize,
+    //     fri_lde_degree: usize,
+    //     row_idx: usize,
+    //     domain_size: usize,
+    //     tree_holder: &TreeCache,
+    // ) -> CudaResult<OracleQuery<F, H>> {
+    //     let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
+    //     tree_holder.get_setup_subtrees().query(
+    //         &leaf_sources.as_polynomials(),
+    //         coset_idx,
+    //         fri_lde_degree,
+    //         row_idx,
+    //         domain_size,
+    //     )
+    // }
 
     pub fn batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
         &mut self,
@@ -491,10 +521,10 @@ impl SetupCache {
         domain_size: usize,
         h_all_leaf_elems: &mut Vec<F, A>,
         h_all_proofs: &mut Vec<F, A>,
-        tree_holder: &TreeCache,
+        // tree_holder: &TreeCache,
     ) -> CudaResult<()> {
         let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
-        let oracle_data = tree_holder.get_setup_subtree(coset_idx);
+        let oracle_data = &self.fri_oracles_subtrees.as_ref().unwrap()[coset_idx];
         batch_query::<H, A>(
             indexes,
             num_queries,

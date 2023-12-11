@@ -70,19 +70,18 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
         &worker,
     )
     .unwrap();
-    let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).unwrap();
-
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
         let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
             ProvingCSConfig,
             true,
         >(finalization_hint.as_ref());
+        let mut setup_cache = SetupCache::new(&gpu_setup, &prover_config, &proving_cs).unwrap();
         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
             &mut proving_cs,
             prover_config,
             &gpu_setup,
-            &gpu_raw_setup,
+            &mut setup_cache,
             &vk,
             (),
             &worker,
@@ -333,16 +332,16 @@ fn test_proof_comparison_for_sha256() {
         &worker,
     )
     .unwrap();
-    let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).unwrap();
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
         let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let mut setup_cache = SetupCache::new(&gpu_setup, &prover_config, &proving_cs).unwrap();
         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
             &mut proving_cs,
             prover_config,
             &gpu_setup,
-            &gpu_raw_setup,
+            &mut setup_cache,
             &vk,
             (),
             &worker,
@@ -933,18 +932,18 @@ mod zksync {
                     wits_hint.clone(),
                     &worker,
                 )?; // should we use unwrap() here?
-                let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup)?;
 
                 println!("gpu proving");
 
                 let gpu_proof = {
                     let mut proving_cs =
                         synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+                    let mut setup_cache = SetupCache::new(&gpu_setup, &proof_config, &proving_cs).unwrap();
                     gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
                         &mut proving_cs,
                         proof_config,
                         &gpu_setup,
-                        &gpu_raw_setup,
+                        &mut setup_cache,
                         &vk,
                         (),
                         worker,
@@ -1079,13 +1078,13 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
-        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
+        let mut setup_cache = SetupCache::new(&gpu_setup, &proof_cfg, &proving_cs).expect("setup cache");
         let gpu_proof = {
             gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
                 &mut proving_cs,
                 proof_cfg.clone(),
                 &gpu_setup,
-                &gpu_raw_setup,
+                &mut setup_cache,
                 &vk,
                 (),
                 worker,
@@ -1160,7 +1159,6 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
-        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
 
         let gpu_proof = {
             range_push!("proving_cs.materialize_witness_vec");
@@ -1168,6 +1166,9 @@ mod zksync {
             range_pop!();
             range_push!("init_cs_for_external_proving");
             let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+            range_pop!();
+            range_push!("SetupCache::new(&gpu_setup, &proof_cfg, &reusable_cs");
+            let mut setup_cache = SetupCache::new(&gpu_setup, &proof_cfg, &reusable_cs).expect("setup cache");
             range_pop!();
             gpu_prove_from_external_witness_data::<
                 _,
@@ -1180,7 +1181,7 @@ mod zksync {
                 &witness,
                 proof_cfg.clone(),
                 &gpu_setup,
-                &gpu_raw_setup,
+                &mut setup_cache,
                 &vk,
                 (),
                 worker,
@@ -1197,7 +1198,7 @@ mod zksync {
                 &witness,
                 proof_cfg.clone(),
                 &gpu_setup,
-                &gpu_raw_setup,
+                &mut setup_cache,
                 &vk,
                 (),
                 worker,
@@ -1253,7 +1254,7 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
-        let gpu_raw_setup = GenericSetupStorage::<_>::from_gpu_setup(&gpu_setup).expect("gpu raw setup");
+        let mut setup_cache = SetupCache::new(&gpu_setup, &proof_config, &proving_cs).expect("setup cache");
         witness.public_inputs_locations = vec![(0, 0)];
         gpu_setup.variables_hint[0][0] = 1 << 31;
         let _ = gpu_prove_from_external_witness_data::<
@@ -1267,7 +1268,7 @@ mod zksync {
             &witness,
             proof_config.clone(),
             &gpu_setup,
-            &gpu_raw_setup,
+            &mut setup_cache,
             &vk,
             (),
             &worker,

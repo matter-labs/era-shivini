@@ -182,6 +182,7 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     fri_lde_degree: usize,
     domain_size: usize,
     setup: &GpuSetup<A>,
+    setup_cache: &mut SetupCache,
     witness_data: &WitnessVec<F>,
     lookup_parameters: &LookupParameters,
     worker: &Worker,
@@ -239,16 +240,26 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     let (variables_monomial_storage, remaining_monomial_storage) =
         remaining_monomial_storage.split_at_mut(num_variable_cols * domain_size);
 
-    for ((variables, d_variables_raw), d_variables_monomial) in variables_hint
+    if setup_cache.variables_hint.is_none() {
+        let transferred = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+        let mut variables_hint_cache = Vec::with_capacity(variables_hint.len());
+        for variables in variables_hint {
+            let mut d_variable_indexes = dvec!(variables.len());
+            mem::h2d_on_stream(variables, &mut d_variable_indexes, &inner_h2d_stream)?;
+            variables_hint_cache.push(d_variable_indexes);
+        }
+        transferred.record(&inner_h2d_stream)?;
+        get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
+        setup_cache.variables_hint = Some(variables_hint_cache);
+    }
+
+    let variables_hint_cached = setup_cache.variables_hint.as_ref().unwrap();
+
+    for ((d_variable_indexes, d_variables_raw), d_variables_monomial) in variables_hint_cached
         .iter()
         .zip(variables_raw_storage.chunks_mut(domain_size))
         .zip(variables_monomial_storage.chunks_mut(domain_size))
     {
-        let transferred = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-        let mut d_variable_indexes = dvec!(variables.len());
-        mem::h2d_on_stream(variables, &mut d_variable_indexes, &inner_h2d_stream)?;
-        transferred.record(&inner_h2d_stream)?;
-        get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
         variable_assignment(&d_variable_indexes, &d_variable_values, d_variables_raw)?;
         let (_, padding) = d_variables_raw.split_at_mut(d_variable_indexes.len());
         if !padding.is_empty() {
@@ -266,16 +277,26 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
     // hints may not be proper rectangular, so look for at least one non-empty col
     let has_witnesses = witnesses_hint.iter().any(|v| !v.is_empty());
     if has_witnesses {
-        for ((witnesses, d_witnesses_raw), d_witnesses_monomial) in witnesses_hint
+        if setup_cache.witnesses_hint.is_none() {
+            let transferred = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+            let mut witnesses_hint_cache = Vec::with_capacity(witnesses_hint.len());
+            for witnesses in witnesses_hint {
+                let mut d_witness_indexes = dvec!(witnesses.len());
+                mem::h2d_on_stream(witnesses, &mut d_witness_indexes, &inner_h2d_stream)?;
+                witnesses_hint_cache.push(d_witness_indexes);
+            }
+            transferred.record(&inner_h2d_stream)?;
+            get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
+            setup_cache.witnesses_hint = Some(witnesses_hint_cache);
+        }
+
+        let witnesses_hint_cached = setup_cache.witnesses_hint.as_ref().unwrap();
+
+        for ((d_witness_indexes, d_witnesses_raw), d_witnesses_monomial) in witnesses_hint_cached
             .iter()
             .zip(witnesses_raw_storage.chunks_mut(domain_size))
             .zip(witnesses_monomial_storage.chunks_mut(domain_size))
         {
-            let transferred = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-            let mut d_witness_indexes = dvec!(witnesses.len());
-            mem::h2d_on_stream(witnesses, &mut d_witness_indexes, &inner_h2d_stream)?;
-            transferred.record(&inner_h2d_stream)?;
-            get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
             range_push!("variable_assignment");
             variable_assignment(&d_witness_indexes, &d_variable_values, d_witnesses_raw)?;
             range_pop!();

@@ -9,7 +9,7 @@ enum OracleType {
     Trace,
     Argument,
     Quotient,
-    Setup,
+    // Setup,
 }
 
 impl OracleType {
@@ -18,7 +18,7 @@ impl OracleType {
             OracleType::Trace => "Trace",
             OracleType::Argument => "Argument",
             OracleType::Quotient => "Quotient",
-            OracleType::Setup => "Setup",
+            // OracleType::Setup => "Setup",
         }
     }
 }
@@ -27,10 +27,10 @@ impl OracleType {
 pub struct TreeCache {
     folding_schedule: Vec<usize>,
     fri_lde_degree: usize,
-    trace_subtrees: Vec<SubTree>,
-    argument_subtrees: Vec<SubTree>,
-    setup_subtrees: Vec<SubTree>,
-    quotient_subtrees: Vec<SubTree>,
+    // trace_subtrees: Vec<SubTree>,
+    // argument_subtrees: Vec<SubTree>,
+    // setup_subtrees: Vec<SubTree>,
+    // quotient_subtrees: Vec<SubTree>,
     storage: HashMap<OracleType, Vec<SubTree>>,
 }
 
@@ -40,10 +40,10 @@ impl TreeCache {
         Self {
             folding_schedule: vec![],
             fri_lde_degree,
-            trace_subtrees: vec![],
-            argument_subtrees: vec![],
-            setup_subtrees: vec![],
-            quotient_subtrees: vec![],
+            // trace_subtrees: vec![],
+            // argument_subtrees: vec![],
+            // setup_subtrees: vec![],
+            // quotient_subtrees: vec![],
             storage: HashMap::new(),
         }
     }
@@ -87,19 +87,19 @@ impl TreeCache {
         unimplemented!()
     }
 
-    pub fn setup_setup_subtrees(&mut self, subtrees: Vec<SubTree>) {
-        assert_eq!(subtrees.len(), self.fri_lde_degree);
-        assert!(self.storage.insert(OracleType::Setup, subtrees).is_none())
-    }
+    // pub fn setup_setup_subtrees(&mut self, subtrees: Vec<SubTree>) {
+    //     assert_eq!(subtrees.len(), self.fri_lde_degree);
+    //     assert!(self.storage.insert(OracleType::Setup, subtrees).is_none())
+    // }
 
-    #[allow(dead_code)]
-    pub fn get_setup_subtrees(&self) -> &Vec<SubTree> {
-        self.get(OracleType::Setup)
-    }
+    // #[allow(dead_code)]
+    // pub fn get_setup_subtrees(&self) -> &Vec<SubTree> {
+    //     self.get(OracleType::Setup)
+    // }
 
-    pub fn get_setup_subtree(&self, coset_idx: usize) -> &SubTree {
-        self.get_coset_subtree(OracleType::Setup, coset_idx)
-    }
+    // pub fn get_setup_subtree(&self, coset_idx: usize) -> &SubTree {
+    //     self.get_coset_subtree(OracleType::Setup, coset_idx)
+    // }
 
     pub fn set_quotient_subtrees(&mut self, subtrees: Vec<SubTree>) {
         assert_eq!(subtrees.len(), self.fri_lde_degree);

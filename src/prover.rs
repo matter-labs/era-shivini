@@ -46,7 +46,7 @@ pub fn gpu_prove_from_external_witness_data<
     external_witness_data: &WitnessVec<F>, // TODO: read data from Assembly pinned storage
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
-    raw_setup: &GenericSetupStorage<LagrangeBasis>,
+    setup_cache: &mut SetupCache,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
@@ -87,6 +87,7 @@ pub fn gpu_prove_from_external_witness_data<
             proof_config.fri_lde_factor,
             domain_size,
             setup,
+            setup_cache,
             &external_witness_data,
             &cs.lookup_parameters,
             worker,
@@ -119,7 +120,7 @@ pub fn gpu_prove_from_external_witness_data<
         trace_tree_cap,
         public_inputs_with_locations,
         setup,
-        raw_setup,
+        setup_cache,
         proof_config,
         vk,
         transcript_params,
@@ -179,7 +180,7 @@ pub fn materialize_variable_cols_from_hints<
     result
 }
 
-pub fn materialzie_witness_cols_from_hints<
+pub fn materialize_witness_cols_from_hints<
     P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     A: GoodAllocator,
 >(
@@ -280,7 +281,7 @@ pub fn gpu_prove<
     cs: &mut CSReferenceAssembly<F, P, ProvingCSConfig>,
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
-    raw_setup: &GenericSetupStorage<LagrangeBasis>,
+    setup_cache: &mut SetupCache,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
@@ -303,7 +304,7 @@ pub fn gpu_prove<
     let h_variables_cols = materialize_variable_cols_from_hints(&cs, &setup.variables_hint, worker);
     range_pop!();
     range_push!("materialize_witness_cols_from_hints");
-    let h_witnesses_cols = materialzie_witness_cols_from_hints(&cs, &setup.witnesses_hint, worker);
+    let h_witnesses_cols = materialize_witness_cols_from_hints(&cs, &setup.witnesses_hint, worker);
     range_pop!();
     range_push!("materialize_multiplicities_polynomials");
     let h_multiplicities = materialize_multiplicities_polynomials(&cs, worker);
@@ -342,7 +343,7 @@ pub fn gpu_prove<
         trace_tree_cap,
         public_inputs_with_locations,
         setup,
-        raw_setup,
+        setup_cache,
         proof_config,
         vk,
         transcript_params,
@@ -406,7 +407,7 @@ fn gpu_prove_from_trace<
     trace_tree_cap: Vec<[F; 4]>,
     public_inputs_with_locations: Vec<(usize, usize, F)>,
     setup_base: &GpuSetup<A>,
-    raw_setup: &GenericSetupStorage<LagrangeBasis>,
+    setup_holder: &mut SetupCache,
     proof_config: ProofConfig,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
@@ -438,6 +439,8 @@ fn gpu_prove_from_trace<
     let quotient_degree = compute_quotient_degree(&cs, &selectors_placement);
     let fri_lde_degree = proof_config.fri_lde_factor;
     let used_lde_degree = std::cmp::max(fri_lde_degree, quotient_degree);
+    assert_eq!(fri_lde_degree, setup_holder.fri_lde_degree);
+    assert_eq!(used_lde_degree, setup_holder.used_lde_degree);
 
     // cap size shouldn't be part of subtree
     // Immediately transfer raw trace to the device and simultaneously compute monomials of the whole trace
@@ -494,10 +497,6 @@ fn gpu_prove_from_trace<
     let mut non_residues_by_beta = dvec!(h_non_residues_by_beta.len());
     non_residues_by_beta.copy_from_slice(&h_non_residues_by_beta)?;
 
-    range_push!("GenericSetupStorage::clone()");
-    // let raw_setup = GenericSetupStorage::from_gpu_setup(&setup_base)?;
-    let raw_setup = raw_setup.clone()?;
-    range_pop!();
     let arguments_layout = ArgumentsLayout::from_trace_layout_and_lookup_params(
         raw_trace.layout.clone(),
         quotient_degree,
@@ -505,7 +504,7 @@ fn gpu_prove_from_trace<
     );
     let mut argument_raw_storage = GenericArgumentStorage::allocate(arguments_layout, domain_size)?;
     let raw_trace_polynomials = raw_trace.as_polynomials();
-    let raw_setup_polynomials = raw_setup.as_polynomials();
+    let raw_setup_polynomials = setup_holder.evals_on_trace_domain.as_polynomials();
 
     compute_partial_products(
         &raw_trace_polynomials,
@@ -711,13 +710,6 @@ fn gpu_prove_from_trace<
     copy_permutation_challenges_partial_product_terms.copy_from_slice(&h_vec)?;
 
     let mut quotient = ComplexPoly::<LDE>::zero(quotient_degree * domain_size)?;
-    // this acts on raw_setup in place, which is why i did
-    // let raw_setup = raw_setup.clone()
-    // earlier. This is the simplest approach, but uses more memory.
-    // We can discuss other approaches.
-    let base_monomial_setup = raw_setup.into_monomials()?;
-    let mut setup_holder =
-        SetupCache::from_monomial(base_monomial_setup, fri_lde_degree, used_lde_degree)?;
 
     let variables_offset = cs.parameters.num_columns_under_copy_permutation;
 
@@ -809,7 +801,7 @@ fn gpu_prove_from_trace<
     let (h_evaluations_at_z, h_evaluations_at_z_omega, h_evaluations_at_zero) = {
         compute_evaluations_over_lagrange_basis(
             &mut trace_holder,
-            &mut setup_holder,
+            setup_holder,
             &mut argument_holder,
             &mut quotient_holder,
             h_z.clone(),
@@ -1050,9 +1042,9 @@ fn gpu_prove_from_trace<
     );
 
     // TODO: consider to do setup query on the host
-    let (setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
-    assert_eq!(setup_base.setup_tree.get_cap(), setup_tree_cap);
-    tree_holder.setup_setup_subtrees(setup_subtrees);
+    let (_setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
+    assert_eq!(&setup_base.setup_tree.get_cap(), setup_tree_cap);
+    // tree_holder.setup_setup_subtrees(setup_subtrees);
     // tree_holder.set_setup_tree_from_host_data(&setup_base.setup_tree);
 
     for (coset_idx, indexes_for_coset) in d_query_details.iter().enumerate() {
@@ -1094,7 +1086,7 @@ fn gpu_prove_from_trace<
             domain_size,
             &mut gpu_proof.setup_all_leaf_elems[coset_idx],
             &mut gpu_proof.setup_all_proofs[coset_idx],
-            &tree_holder,
+            // &tree_holder,
         )?;
     }
     // FIXME: query FRI oracles
