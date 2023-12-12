@@ -1042,7 +1042,7 @@ fn gpu_prove_from_trace<
     );
 
     // TODO: consider to do setup query on the host
-    let (_setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
+    let setup_tree_cap = &setup_holder.fri_oracles_cap;
     assert_eq!(&setup_base.setup_tree.get_cap(), setup_tree_cap);
     // tree_holder.setup_setup_subtrees(setup_subtrees);
     // tree_holder.set_setup_tree_from_host_data(&setup_base.setup_tree);

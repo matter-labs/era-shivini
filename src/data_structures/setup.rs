@@ -385,10 +385,10 @@ pub struct SetupCache {
     pub evals_on_trace_domain: GenericSetupStorage<LagrangeBasis>,
     pub monomials: GenericSetupStorage<MonomialBasis>,
     cosets: Vec<Option<Rc<GenericSetupStorage<CosetEvaluations>>>>,
-    pub variables_hint: Option<Vec<DVec<u32>>>,
+    pub variables_hint: Vec<DVec<u32>>,
     pub witnesses_hint: Option<Vec<DVec<u32>>>,
-    pub fri_oracles_subtrees: Option<Vec<SubTree>>,
-    pub fri_oracles_caps: Option<Vec<[F; 4]>>,
+    pub fri_oracles_subtrees: Vec<SubTree>,
+    pub fri_oracles_cap: Vec<[F; 4]>,
     pub fri_lde_degree: usize,
     pub used_lde_degree: usize,
 }
@@ -412,60 +412,63 @@ impl SetupCache {
         let evals_on_trace_domain = GenericSetupStorage::<_>::from_gpu_setup(setup)?;
         let tmp = evals_on_trace_domain.clone()?;
         let monomials = tmp.into_monomials()?;
-
         let cosets = vec![None; fri_lde_degree];
+        let stream = get_stream();
+        let setup_variables_hint = &setup.variables_hint;
+        let mut variables_hint = Vec::with_capacity(setup_variables_hint.len());
+        for variables in setup_variables_hint {
+            let mut d_variable_indexes = dvec!(variables.len());
+            mem::h2d_on_stream(variables, &mut d_variable_indexes, stream)?;
+            variables_hint.push(d_variable_indexes);
+        }
+        let setup_witnesses_hint = &setup.witnesses_hint;
+        // hints may not be proper rectangular, so look for at least one non-empty col
+        let has_witnesses = setup_witnesses_hint.iter().any(|v| !v.is_empty());
+        let witnesses_hint = if has_witnesses {
+            let mut witnesses_hint_cache = Vec::with_capacity(setup_witnesses_hint.len());
+            for witnesses in setup_witnesses_hint {
+                let mut d_witness_indexes = dvec!(witnesses.len());
+                mem::h2d_on_stream(witnesses, &mut d_witness_indexes, stream)?;
+                witnesses_hint_cache.push(d_witness_indexes);
+            }
+            Some(witnesses_hint_cache)
+        } else {
+            None
+        };
+        stream.synchronize()?;
 
-        let this = Self {
+        let mut this = Self {
             evals_on_trace_domain,
             monomials,
             cosets,
-            variables_hint: None,
-            witnesses_hint: None,
-            fri_oracles_subtrees: None,
-            fri_oracles_caps: None,
+            variables_hint,
+            witnesses_hint,
+            fri_oracles_subtrees: vec![],
+            fri_oracles_cap: vec![],
             fri_lde_degree,
             used_lde_degree,
         };
+
+        let cap_size = proof_config.merkle_tree_cap_size;
+        let coset_cap_size = coset_cap_size(cap_size, fri_lde_degree);
+        let mut setup_subtrees = Vec::with_capacity(fri_lde_degree);
+        let mut setup_subtree_caps = Vec::with_capacity(fri_lde_degree);
+        for coset_idx in 0..fri_lde_degree {
+            let coset_values = this.get_or_compute_coset_evals(coset_idx)?;
+            let (subtree, subtree_cap) =
+                coset_values.build_subtree_for_coset(coset_cap_size, coset_idx)?;
+            setup_subtree_caps.push(subtree_cap);
+            setup_subtrees.push(subtree);
+        }
+        this.fri_oracles_cap =
+            setup_subtree_caps.compute_cap::<DefaultTreeHasher>(&mut setup_subtrees, cap_size)?;
+        this.fri_oracles_subtrees = setup_subtrees;
 
         Ok(this)
     }
 
     pub fn num_polys(&self) -> usize {
         self.monomials.num_polys()
-    }
-
-    pub fn commit<H: TreeHasher<F, Output = [F; 4]>>(
-        &mut self,
-        cap_size: usize,
-    ) -> CudaResult<(&Vec<SubTree>, &Vec<[F; 4]>)> {
-        assert_eq!(
-            self.fri_oracles_subtrees.is_none(),
-            self.fri_oracles_caps.is_none()
-        );
-        if self.fri_oracles_subtrees.is_none() {
-            let fri_lde_degree = self.fri_lde_degree;
-            let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
-            let mut setup_subtrees = Vec::with_capacity(fri_lde_degree);
-            let mut setup_subtree_caps = Vec::with_capacity(fri_lde_degree);
-
-            assert_eq!(self.cosets.len(), fri_lde_degree);
-
-            for coset_idx in 0..fri_lde_degree {
-                let coset_values = self.get_or_compute_coset_evals(coset_idx)?;
-                let (subtree, subtree_cap) =
-                    coset_values.build_subtree_for_coset(coset_cap_size, coset_idx)?;
-                setup_subtree_caps.push(subtree_cap);
-                setup_subtrees.push(subtree);
-            }
-
-            self.fri_oracles_caps =
-                Some(setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?);
-            self.fri_oracles_subtrees = Some(setup_subtrees);
-        }
-
-        let subtrees = self.fri_oracles_subtrees.as_ref().unwrap();
-        let caps = self.fri_oracles_caps.as_ref().unwrap();
-        Ok((subtrees, caps))
     }
 
     pub fn get_or_compute_coset_evals(
@@ -531,7 +534,7 @@ impl SetupCache {
         // tree_holder: &TreeCache,
     ) -> CudaResult<()> {
         let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
-        let oracle_data = &self.fri_oracles_subtrees.as_ref().unwrap()[coset_idx];
+        let oracle_data = &self.fri_oracles_subtrees[coset_idx];
         batch_query::<H, A>(
             indexes,
             num_queries,
