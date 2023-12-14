@@ -118,6 +118,29 @@ pub fn ifft(input: &mut [F], coset: &DF) -> CudaResult<()> {
     Ok(())
 }
 
+pub fn coset_ifft(coeffs: &mut [F], coset_idx: usize, lde_degree: usize) -> CudaResult<()> {
+    assert!(lde_degree > 1);
+    debug_assert!(coeffs.len().is_power_of_two());
+    let log_n = coeffs.len().trailing_zeros();
+    let log_lde_factor = lde_degree.trailing_zeros();
+    let stride = 1 << log_n;
+    let coset_idx = bitreverse_index(coset_idx, log_lde_factor as usize);
+    let d_coeffs = unsafe { DeviceSlice::from_mut_slice(coeffs) };
+    let stream = get_stream();
+    boojum_cuda::ntt::batch_ntt_in_place(
+        d_coeffs,
+        log_n,
+        1,
+        0,
+        stride,
+        true,
+        true,
+        log_lde_factor,
+        coset_idx as u32,
+        stream,
+    )
+}
+
 #[allow(dead_code)]
 pub fn ifft_into(input: &[F], output: &mut [F]) -> CudaResult<()> {
     ntt_into(input, output, true)?;

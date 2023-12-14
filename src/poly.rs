@@ -22,6 +22,8 @@ pub(crate) struct PrecomputedBasisForBarycentric {
     pub(crate) bases: DVec<F>,
 }
 
+use nvtx::{range_push, range_pop};
+
 impl PrecomputedBasisForBarycentric {
     pub fn precompute(domain_size: usize, point: EF) -> CudaResult<Self> {
         let mut bases = dvec!(2 * domain_size);
@@ -289,7 +291,9 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
 impl<'a> Poly<'a, CosetEvaluations> {
     #[allow(dead_code)]
     pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
+        range_push!("Poly<CosetEvaluations> ifft");
         ntt::ifft(self.storage.as_mut(), coset)?;
+        range_pop!();
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
@@ -302,14 +306,22 @@ impl<'a> Poly<'a, CosetEvaluations> {
         domain_size: usize,
         lde_degree: usize,
     ) -> CudaResult<()> {
+        range_push!("Poly<CosetEvaluations> lde_from_trace_values");
         // first coset has base trace lagranage basis values
-        ntt::lde_from_lagrange_basis(self.storage.as_mut(), domain_size, lde_degree)
+        let ret = ntt::lde_from_lagrange_basis(self.storage.as_mut(), domain_size, lde_degree);
+        range_pop!();
+        ret
     }
 }
 
 impl<'a> Poly<'a, LDE> {
-    pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
-        ntt::ifft(self.storage.as_mut(), coset)?;
+    pub fn ifft(mut self) -> CudaResult<Poly<'a, MonomialBasis>> {
+        range_push!("Poly<LDE> ifft");
+        // Any power of two > 1 would work here, it just signals to the kernel that we are, in fact,
+        // inverting an LDE and it should multiply x_i by g_inv^i
+        let dummy_lde_degree = 2;
+        ntt::coset_ifft(self.storage.as_mut(), 0, dummy_lde_degree)?;
+        range_pop!();
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
@@ -320,7 +332,9 @@ impl<'a> Poly<'a, LDE> {
 impl<'a> Poly<'a, LagrangeBasis> {
     #[allow(dead_code)]
     pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
+        range_push!("Poly<LagrangeBasis> ifft");
         ntt::ifft(self.storage.as_mut(), &coset)?;
+        range_pop!();
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
@@ -344,7 +358,9 @@ impl<'a> Poly<'a, MonomialBasis> {
         coset_idx: usize,
         lde_degree: usize,
     ) -> CudaResult<Poly<'a, CosetEvaluations>> {
+        range_push!("Poly<MonomialBasis> coset_fft");
         ntt::coset_fft(self.storage.as_mut(), coset_idx, lde_degree)?;
+        range_pop!();
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
@@ -353,7 +369,9 @@ impl<'a> Poly<'a, MonomialBasis> {
 
     #[allow(dead_code)]
     pub fn fft(mut self, coset: &DF) -> CudaResult<Poly<'a, LagrangeBasis>> {
+        range_push!("Poly<MonomialBasis> fft");
         ntt::fft(self.storage.as_mut(), coset)?;
+        range_pop!();
 
         Ok(Poly {
             storage: self.storage,
@@ -371,7 +389,10 @@ impl<'a> Poly<'a, MonomialBasis> {
 
     #[allow(dead_code)]
     pub fn lde_into(self, result: &mut Poly<LDE>, lde_degree: usize) -> CudaResult<()> {
-        ntt::lde(self.storage.as_ref(), result.storage.as_mut(), lde_degree)
+        range_push!("Poly<MonomialBasis> lde_into");
+        let ret = ntt::lde(self.storage.as_ref(), result.storage.as_mut(), lde_degree);
+        range_pop!();
+        ret
     }
 
     #[allow(dead_code)]
@@ -420,10 +441,10 @@ impl<'a> ComplexPoly<'a, CosetEvaluations> {
     }
 }
 impl<'a> ComplexPoly<'a, LDE> {
-    pub fn ifft(self, coset: &DF) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
+    pub fn ifft(self) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
         let Self { c0, c1 } = self;
-        let c0 = c0.ifft(coset)?;
-        let c1 = c1.ifft(coset)?;
+        let c0 = c0.ifft()?;
+        let c1 = c1.ifft()?;
 
         Ok(ComplexPoly { c0, c1 })
     }
