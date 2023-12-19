@@ -22,7 +22,7 @@ pub(crate) struct PrecomputedBasisForBarycentric {
     pub(crate) bases: DVec<F>,
 }
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 impl PrecomputedBasisForBarycentric {
     pub fn precompute(domain_size: usize, point: EF) -> CudaResult<Self> {
@@ -291,10 +291,7 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
 impl<'a> Poly<'a, LDE> {
     pub fn intt(mut self) -> CudaResult<Poly<'a, MonomialBasis>> {
         range_push!("Poly<LDE> intt");
-        // Any power of two > 1 would work for lde_degree, it just signals to the kernel that we are, in fact,
-        // inverting an LDE and it should multiply x_i by g_inv^i
-        let dummy_lde_degree = 2;
-        ntt::coset_ifft(self.storage.as_mut(), 0, dummy_lde_degree)?;
+        ntt::lde_intt(self.storage.as_mut())?;
         range_pop!();
         Ok(Poly {
             storage: self.storage,

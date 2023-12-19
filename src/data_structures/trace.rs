@@ -1,10 +1,6 @@
 use boojum::{
     cs::{
-        implementations::{
-            proof::OracleQuery,
-            prover::ProofConfig,
-            witness::{WitnessSet, WitnessVec},
-        },
+        implementations::{proof::OracleQuery, prover::ProofConfig, witness::WitnessVec},
         oracle::TreeHasher,
         traits::GoodAllocator,
         LookupParameters,
@@ -30,29 +26,6 @@ pub struct TraceLayout {
 }
 
 impl TraceLayout {
-    pub fn from_witness_set(witness_set: &WitnessSet<F>) -> Self {
-        assert!(witness_set.variables.len() > 0);
-        assert!(witness_set.multiplicities.len() < 2);
-        Self {
-            num_variable_cols: witness_set.variables.len(),
-            num_witness_cols: witness_set.witness.len(),
-            num_multiplicity_cols: witness_set.multiplicities.len(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn new(
-        num_variable_cols: usize,
-        num_witness_cols: usize,
-        num_multiplicity_cols: usize,
-    ) -> Self {
-        Self {
-            num_variable_cols,
-            num_witness_cols,
-            num_multiplicity_cols,
-        }
-    }
-
     pub fn num_polys(&self) -> usize {
         self.num_variable_cols + self.num_witness_cols + self.num_multiplicity_cols
     }
@@ -564,40 +537,6 @@ impl GenericTraceStorage<LagrangeBasis> {
 }
 
 impl GenericTraceStorage<MonomialBasis> {
-    #[allow(dead_code)]
-    pub fn from_host_values(witness_set: &WitnessSet<F>) -> CudaResult<Self> {
-        let WitnessSet {
-            variables,
-            witness,
-            multiplicities,
-            ..
-        } = witness_set;
-        let trace_layout = TraceLayout::from_witness_set(witness_set);
-        let num_polys = trace_layout.num_polys();
-
-        let domain_size = variables[0].domain_size();
-        let coset = DF::one()?;
-        let mut storage = GenericStorage::allocate(num_polys, domain_size)?;
-        for (src, poly) in variables
-            .iter()
-            .chain(witness.iter())
-            .chain(multiplicities.iter())
-            .zip(storage.as_mut().chunks_mut(domain_size))
-        {
-            mem::h2d(&src.storage, poly)?;
-            // we overlap data transfer and ntt computation here
-            // so we are fine with many kernel calls
-            ntt::ifft(poly, &coset)?;
-        }
-
-        Ok(Self {
-            storage,
-            coset_idx: None,
-            form: std::marker::PhantomData,
-            layout: trace_layout,
-        })
-    }
-
     pub fn into_coset_eval(
         &self,
         coset_idx: usize,
