@@ -24,55 +24,77 @@ pub struct StaticDeviceAllocator {
     // TODO: Can we use deque
     bitmap: Arc<Vec<AtomicBool>>,
     #[cfg(feature = "allocator_stats")]
-    pub stats: Arc<std::sync::Mutex<AllocationStats>>,
+    pub stats: Arc<std::sync::Mutex<stats::AllocationStats>>,
 }
 
 #[cfg(feature = "allocator_stats")]
-#[derive(Derivative)]
-#[derivative(Clone, Debug, Default)]
-pub struct AllocationStats {
-    pub maximum_block_count: usize,
-    pub maximum_tail_index: usize,
-    pub allocations: std::collections::BTreeMap<usize, (usize, String)>,
-}
+mod stats {
+    use derivative::Derivative;
+    use std::collections::BTreeMap;
 
-#[cfg(feature = "allocator_stats")]
-impl AllocationStats {
-    pub fn alloc(&mut self, index: usize, size: usize, backtrace: String) {
-        self.allocations.insert(index, (size, backtrace));
-        self.maximum_block_count = self.maximum_block_count.max(self.current_block_count());
-        self.maximum_tail_index = self.maximum_tail_index.max(index + size);
+    type Allocations = BTreeMap<usize, (usize, String)>;
+
+    #[derive(Derivative)]
+    #[derivative(Clone, Debug, Default)]
+    pub struct AllocationStats {
+        pub allocations: Allocations,
+        pub maximum_block_count: usize,
+        pub maximum_tail_index: usize,
+        pub maximum_block_count_at_maximum_tail_index: usize,
+        pub allocations_at_maximum_block_count: Allocations,
+        pub allocations_at_maximum_block_count_at_maximum_tail_index: Allocations,
     }
 
-    pub fn free(&mut self, index: usize) {
-        self.allocations.remove(&index);
-    }
+    impl AllocationStats {
+        pub fn alloc(&mut self, index: usize, size: usize, backtrace: String) {
+            self.allocations.insert(index, (size, backtrace));
+            let current_block_count = self.current_block_count();
+            let previous_maximum_block_count = self.maximum_block_count;
+            self.maximum_block_count = self.maximum_block_count.max(current_block_count);
+            let is_new_maximum_block_count =
+                self.maximum_block_count != previous_maximum_block_count;
+            if is_new_maximum_block_count {
+                self.allocations_at_maximum_block_count = self.allocations.clone();
+            }
+            let current_tail_index = index + size;
+            self.maximum_tail_index = self.maximum_tail_index.max(current_tail_index);
+            let is_maximum_tail_index = self.maximum_tail_index == current_tail_index;
+            if is_maximum_tail_index {
+                let previous_maximum_block_count_at_maximum_tail_index =
+                    self.maximum_block_count_at_maximum_tail_index;
+                self.maximum_block_count_at_maximum_tail_index = self
+                    .maximum_block_count_at_maximum_tail_index
+                    .max(current_block_count);
+                let is_new_maximum_block_count_at_maximum_tail_index = self
+                    .maximum_block_count_at_maximum_tail_index
+                    != previous_maximum_block_count_at_maximum_tail_index;
+                if is_new_maximum_block_count_at_maximum_tail_index {
+                    self.allocations_at_maximum_block_count_at_maximum_tail_index =
+                        self.allocations.clone();
+                }
+            }
+        }
 
-    pub fn current_block_count(&self) -> usize {
-        self.allocations.values().map(|&(size, _)| size).sum()
-    }
+        pub fn free(&mut self, index: usize) {
+            self.allocations.remove(&index);
+        }
 
-    pub fn current_tail_index(&self) -> usize {
-        self.allocations
-            .last_key_value()
-            .map_or(0, |(&index, &(size, _))| index + size)
-    }
+        pub fn current_block_count(&self) -> usize {
+            self.allocations.values().map(|&(size, _)| size).sum()
+        }
 
-    #[cfg(feature = "allocator_stats")]
-    pub fn print(&self, detailed: bool) {
-        const SEPARATOR: &str = "================================";
-        let AllocationStats {
-            maximum_block_count,
-            maximum_tail_index,
-            allocations,
-        } = self;
-        let current_block_count = self.current_block_count();
-        let current_tail_index = self.current_tail_index();
-        println!("current_block_count: {current_block_count}");
-        println!("current_tail_index: {current_tail_index}");
-        println!("maximum_block_count: {maximum_block_count}");
-        println!("maximum_tail_index: {maximum_tail_index}");
-        if detailed {
+        pub fn current_tail_index(&self) -> usize {
+            self.allocations
+                .last_key_value()
+                .map_or(0, |(&index, &(size, _))| index + size)
+        }
+
+        fn print_allocations(allocations: &Allocations) {
+            if allocations.is_empty() {
+                println!("no allocations");
+                return;
+            }
+            const SEPARATOR: &str = "================================";
             println!("{SEPARATOR}");
             let mut last_index = 0;
             for (index, (length, trace)) in allocations {
@@ -86,6 +108,32 @@ impl AllocationStats {
                 println!("length: {length}");
                 println!("backtrace: \n{trace}");
                 println!("{SEPARATOR}");
+            }
+        }
+
+        pub fn print(&self, detailed: bool) {
+            let AllocationStats {
+                allocations,
+                maximum_block_count,
+                maximum_tail_index,
+                maximum_block_count_at_maximum_tail_index,
+                allocations_at_maximum_block_count,
+                allocations_at_maximum_block_count_at_maximum_tail_index,
+            } = self;
+            let current_block_count = self.current_block_count();
+            let current_tail_index = self.current_tail_index();
+            println!("current_block_count: {current_block_count}");
+            println!("current_tail_index: {current_tail_index}");
+            println!("maximum_block_count: {maximum_block_count}");
+            println!("maximum_tail_index: {maximum_tail_index}");
+            println!("maximum_block_count_at_maximum_tail_index: {maximum_block_count_at_maximum_tail_index}");
+            if detailed {
+                println!("current_allocations:");
+                Self::print_allocations(allocations);
+                println!("allocations_at_maximum_block_count:");
+                Self::print_allocations(allocations_at_maximum_block_count);
+                println!("allocations_at_maximum_block_count_at_maximum_tail_index:");
+                Self::print_allocations(allocations_at_maximum_block_count_at_maximum_tail_index);
             }
         }
     }
@@ -252,6 +300,7 @@ macro_rules! backtrace {
             .split('\n')
             .rev()
             .skip_while(|&s| !s.contains("shivini"))
+            .take_while(|&s| !s.contains("backtrace"))
             .collect();
         x.reverse();
         let backtrace: String = x.join("\n");
