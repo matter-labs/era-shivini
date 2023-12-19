@@ -1092,11 +1092,13 @@ fn gpu_prove_from_trace<
     println!("FRI Queries are done {:?}", time.elapsed());
     #[cfg(feature = "allocator_stats")]
     unsafe {
-        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
-        dbg!(_SMALL_DEVICE_ALLOCATOR
+        dbg!(_DEVICE_ALLOCATOR
             .as_ref()
             .unwrap()
-            .get_allocation_stats());
+            .stats
+            .lock()
+            .unwrap()
+            .print(false));
     }
 
     gpu_proof.public_inputs = public_inputs;
