@@ -222,7 +222,8 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
         if !padding.is_empty() {
             helpers::set_zero(padding)?;
         }
-        ntt::ifft_into(d_variables_raw, d_variables_monomial)?;
+        ntt::intt_into(d_variables_raw, d_variables_monomial)?;
+        ntt::bitreverse(d_variables_monomial)?;
     }
 
     // now witness values
@@ -249,7 +250,8 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
             if !padding.is_empty() {
                 helpers::set_zero(padding)?;
             }
-            ntt::ifft_into(d_witnesses_raw, d_witnesses_monomial)?;
+            ntt::intt_into(d_witnesses_raw, d_witnesses_monomial)?;
+            ntt::bitreverse(d_witnesses_monomial)?;
         }
     } else {
         assert!(witnesses_raw_storage.is_empty());
@@ -297,7 +299,10 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
             helpers::set_zero(padding)?;
         }
         get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
-        ntt::ifft_into(multiplicities_raw_storage, multiplicities_monomial_storage)?;
+        // Reminder to change ntt into batch ntt if we ever use more than one multiplicity col
+        assert_eq!(num_multiplicity_cols, 1);
+        ntt::intt_into(multiplicities_raw_storage, multiplicities_monomial_storage)?;
+        ntt::bitreverse(multiplicities_monomial_storage)?;
     } else {
         assert!(multiplicities_raw_storage.is_empty())
     }
@@ -430,7 +435,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
         )?;
         ntt::batch_bitreverse(monomial_chunk, domain_size)?;
         // TODO: those two can be computed on the different streams in parallel
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             monomial_chunk,
             first_coset_chunk,
             0,
@@ -439,7 +444,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
             num_round_polys,
         )?;
 
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             monomial_chunk,
             second_coset_chunk,
             1,
@@ -548,7 +553,7 @@ impl GenericTraceStorage<MonomialBasis> {
         let domain_size = storage.domain_size;
 
         // let mut coset_storage = GenericStorage::allocate(num_polys, domain_size)?;
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             storage.as_ref(),
             coset_storage.storage.as_mut(),
             coset_idx,
@@ -558,38 +563,6 @@ impl GenericTraceStorage<MonomialBasis> {
         )?;
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn into_raw_trace(self) -> CudaResult<GenericTraceStorage<LagrangeBasis>> {
-        let num_polys = self.num_polys();
-        let Self {
-            mut storage,
-            layout,
-            ..
-        } = self;
-        let domain_size = storage.domain_size;
-        let inner_storage = storage.as_mut();
-
-        ntt::batch_bitreverse(inner_storage, domain_size)?;
-        let is_input_in_bitreversed = true;
-
-        ntt::batch_ntt(
-            inner_storage,
-            is_input_in_bitreversed,
-            false,
-            domain_size,
-            num_polys,
-        )?;
-
-        let new: GenericTraceStorage<LagrangeBasis> = GenericTraceStorage {
-            storage,
-            layout,
-            coset_idx: None,
-            form: std::marker::PhantomData,
-        };
-
-        Ok(new)
     }
 }
 

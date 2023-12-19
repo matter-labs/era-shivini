@@ -80,7 +80,7 @@ fn batch_coset_ntt_raw_into(
 
 // Convenience wrappers for our use cases
 
-pub fn batch_ntt(
+pub(crate) fn batch_ntt(
     input: &mut [F],
     bitreversed_input: bool,
     inverse: bool,
@@ -98,7 +98,7 @@ pub fn batch_ntt(
     )
 }
 
-pub fn batch_ntt_into(
+pub(crate) fn batch_ntt_into(
     inputs: &[F],
     outputs: &mut [F],
     bitreversed_input: bool,
@@ -119,7 +119,7 @@ pub fn batch_ntt_into(
 }
 
 #[allow(dead_code)]
-pub fn coset_fft_into(
+pub(crate) fn coset_ntt_into(
     input: &[F],
     output: &mut [F],
     coset_idx: usize,
@@ -140,7 +140,7 @@ pub fn coset_fft_into(
     )
 }
 
-pub fn lde_intt(input: &mut [F]) -> CudaResult<()> {
+pub(crate) fn lde_intt(input: &mut [F]) -> CudaResult<()> {
     // Any power of two > 1 would work for lde_degree, it just signals to the kernel
     // that we're inverting an LDE and it should multiply x_i by g_inv^i
     let dummy_lde_degree = 2;
@@ -156,12 +156,11 @@ pub fn lde_intt(input: &mut [F]) -> CudaResult<()> {
     )
 }
 
-pub fn ifft_into(input: &[F], output: &mut [F]) -> CudaResult<()> {
-    batch_coset_ntt_raw_into(input, output, false, true, 0, input.len(), 1, 1)?;
-    bitreverse(output)
+pub(crate) fn intt_into(input: &[F], output: &mut [F]) -> CudaResult<()> {
+    batch_coset_ntt_raw_into(input, output, false, true, 0, input.len(), 1, 1)
 }
 
-pub fn batch_coset_fft_into(
+pub(crate) fn batch_coset_ntt_into(
     inputs: &[F],
     outputs: &mut [F],
     coset_idx: usize,
@@ -184,13 +183,13 @@ pub fn batch_coset_fft_into(
     )
 }
 
-pub fn bitreverse(input: &mut [F]) -> CudaResult<()> {
+pub(crate) fn bitreverse(input: &mut [F]) -> CudaResult<()> {
     let stream = get_stream();
     let input = unsafe { DeviceSlice::from_mut_slice(input) };
     boojum_cuda::ops_complex::bit_reverse_in_place(input, stream)
 }
 
-pub fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<()> {
+pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<()> {
     use boojum_cuda::device_structures::DeviceMatrixMut;
     let stream = get_stream();
     let mut input = unsafe {
