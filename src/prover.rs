@@ -99,7 +99,7 @@ pub fn gpu_prove_from_external_witness_data<
     {
         let variable_idx = setup.variables_hint[col][row].clone() as usize;
         assert_eq!(
-            variable_idx & (1 << 31),
+            variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
             0,
             "placeholder found in a public input location"
         );
