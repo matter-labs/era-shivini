@@ -99,7 +99,7 @@ pub fn gpu_prove_from_external_witness_data<
     {
         let variable_idx = setup.variables_hint[col][row].clone() as usize;
         assert_eq!(
-            variable_idx & (1 << 31),
+            variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
             0,
             "placeholder found in a public input location"
         );
@@ -743,10 +743,8 @@ fn gpu_prove_from_trace<
         )?;
     }
 
-    let coset: DF = F::multiplicative_generator().into();
-    quotient.bitreverse()?;
-    let quotient_monomial = quotient.ifft(&coset)?;
-    // quotient memory is guaranteed to allow batch ntts for cosets of the quotinet parts
+    let quotient_monomial = quotient.intt()?;
+    // quotient memory is guaranteed to allow batch ntts for cosets of the quotient parts
     let quotient_chunks = quotient_monomial.clone().into_degree_n_polys(domain_size)?;
 
     let quotient_monomial_storage = GenericComplexPolynomialStorage {
@@ -1092,11 +1090,13 @@ fn gpu_prove_from_trace<
     println!("FRI Queries are done {:?}", time.elapsed());
     #[cfg(feature = "allocator_stats")]
     unsafe {
-        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
-        dbg!(_SMALL_DEVICE_ALLOCATOR
+        _DEVICE_ALLOCATOR
             .as_ref()
             .unwrap()
-            .get_allocation_stats());
+            .stats
+            .lock()
+            .unwrap()
+            .print(true, true);
     }
 
     gpu_proof.public_inputs = public_inputs;
@@ -1711,17 +1711,6 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         polynomials_at_z_omega,
         polynomials_at_zero,
     ))
-}
-
-#[allow(dead_code)]
-pub fn barycentric_evaluate_at_zero(poly: &ComplexPoly<LagrangeBasis>) -> CudaResult<DExt> {
-    let coset: DF = F::multiplicative_generator().into();
-    let mut values = poly.clone();
-    values.bitreverse()?;
-    let monomial = values.ifft(&coset)?;
-    let result = monomial.grand_sum()?;
-
-    Ok(result)
 }
 
 pub fn compute_denom_at_base_point<'a>(

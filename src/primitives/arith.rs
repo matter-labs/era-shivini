@@ -370,24 +370,6 @@ pub fn fold_flattened(src: &[F], dst: &mut [F], coset_inv: F, challenge: &DExt) 
     Ok(())
 }
 
-pub fn distribute_powers(values: &mut [F], base: &DF) -> CudaResult<()> {
-    assert!(values.len().is_power_of_two());
-    let powers = compute_powers(base, values.len())?;
-    arith::mul_assign(values, &powers)?;
-
-    Ok(())
-}
-
-pub fn compute_powers(base: &DF, size: usize) -> CudaResult<DVec<F>> {
-    let mut powers = dvec!(size);
-    helpers::set_value(&mut powers, base)?;
-    let tmp_size = helpers::calculate_tmp_buffer_size_for_grand_product(size)?;
-    let mut tmp = dvec!(tmp_size);
-    arith::shifted_grand_product(&mut powers, &mut tmp)?;
-
-    Ok(powers)
-}
-
 #[allow(dead_code)]
 pub fn compute_powers_ext(base: &DExt, size: usize) -> CudaResult<[DVec<F>; 2]> {
     let mut powers_c0 = dvec!(size);

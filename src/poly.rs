@@ -310,30 +310,9 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
     }
 }
 
-impl<'a> Poly<'a, CosetEvaluations> {
-    #[allow(dead_code)]
-    pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
-        ntt::ifft(self.storage.as_mut(), coset)?;
-        Ok(Poly {
-            storage: self.storage,
-            marker: std::marker::PhantomData,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn lde_from_trace_values(
-        &mut self,
-        domain_size: usize,
-        lde_degree: usize,
-    ) -> CudaResult<()> {
-        // first coset has base trace lagranage basis values
-        ntt::lde_from_lagrange_basis(self.storage.as_mut(), domain_size, lde_degree)
-    }
-}
-
 impl<'a> Poly<'a, LDE> {
-    pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
-        ntt::ifft(self.storage.as_mut(), coset)?;
+    pub fn intt(mut self) -> CudaResult<Poly<'a, MonomialBasis>> {
+        ntt::lde_intt(self.storage.as_mut())?;
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
@@ -342,15 +321,6 @@ impl<'a> Poly<'a, LDE> {
 }
 
 impl<'a> Poly<'a, LagrangeBasis> {
-    #[allow(dead_code)]
-    pub fn ifft(mut self, coset: &DF) -> CudaResult<Poly<'a, MonomialBasis>> {
-        ntt::ifft(self.storage.as_mut(), &coset)?;
-        Ok(Poly {
-            storage: self.storage,
-            marker: std::marker::PhantomData,
-        })
-    }
-
     pub fn grand_sum(&self) -> CudaResult<DF> {
         let tmp_size = helpers::calculate_tmp_buffer_size_for_grand_sum(self.domain_size())?;
         let mut tmp = dvec!(tmp_size);
@@ -362,42 +332,6 @@ impl<'a> Poly<'a, LagrangeBasis> {
 }
 
 impl<'a> Poly<'a, MonomialBasis> {
-    #[allow(dead_code)]
-    pub fn coset_fft(
-        mut self,
-        coset_idx: usize,
-        lde_degree: usize,
-    ) -> CudaResult<Poly<'a, CosetEvaluations>> {
-        ntt::coset_fft(self.storage.as_mut(), coset_idx, lde_degree)?;
-        Ok(Poly {
-            storage: self.storage,
-            marker: std::marker::PhantomData,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn fft(mut self, coset: &DF) -> CudaResult<Poly<'a, LagrangeBasis>> {
-        ntt::fft(self.storage.as_mut(), coset)?;
-
-        Ok(Poly {
-            storage: self.storage,
-            marker: std::marker::PhantomData,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn lde(self, lde_degree: usize) -> CudaResult<Poly<'a, LDE>> {
-        let mut result = Poly::zero(self.domain_size() * lde_degree)?;
-        self.lde_into(&mut result, lde_degree)?;
-
-        Ok(result)
-    }
-
-    #[allow(dead_code)]
-    pub fn lde_into(self, result: &mut Poly<LDE>, lde_degree: usize) -> CudaResult<()> {
-        ntt::lde(self.storage.as_ref(), result.storage.as_mut(), lde_degree)
-    }
-
     #[allow(dead_code)]
     pub fn evaluate_at_ext(&self, at: &DExt) -> CudaResult<DExt> {
         arith::evaluate_base_at_ext(self.storage.as_ref(), at)
@@ -433,36 +367,19 @@ impl<'a> ComplexPoly<'a, CosetEvaluations> {
 
         Ok(())
     }
-
-    #[allow(dead_code)]
-    pub fn ifft(self, coset: &DF) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
-        let Self { c0, c1 } = self;
-        let c0 = c0.ifft(coset)?;
-        let c1 = c1.ifft(coset)?;
-
-        Ok(ComplexPoly { c0, c1 })
-    }
 }
+
 impl<'a> ComplexPoly<'a, LDE> {
-    pub fn ifft(self, coset: &DF) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
+    pub fn intt(self) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
         let Self { c0, c1 } = self;
-        let c0 = c0.ifft(coset)?;
-        let c1 = c1.ifft(coset)?;
+        let c0 = c0.intt()?;
+        let c1 = c1.intt()?;
 
         Ok(ComplexPoly { c0, c1 })
     }
 }
 
 impl<'a> ComplexPoly<'a, LagrangeBasis> {
-    #[allow(dead_code)]
-    pub fn ifft(self, coset: &DF) -> CudaResult<ComplexPoly<'a, MonomialBasis>> {
-        let Self { c0, c1 } = self;
-        let c0 = c0.ifft(&coset)?;
-        let c1 = c1.ifft(&coset)?;
-
-        Ok(ComplexPoly { c0, c1 })
-    }
-
     pub fn grand_sum(&self) -> CudaResult<DExt> {
         let sum_c0 = self.c0.grand_sum()?;
         let sum_c1 = self.c1.grand_sum()?;
@@ -472,17 +389,6 @@ impl<'a> ComplexPoly<'a, LagrangeBasis> {
 }
 
 impl<'a> ComplexPoly<'a, MonomialBasis> {
-    #[allow(dead_code)]
-    pub fn lde(self, lde_degree: usize) -> CudaResult<ComplexPoly<'a, LDE>> {
-        let lde_size = self.domain_size() * lde_degree;
-        let mut c0 = Poly::zero(lde_size)?;
-        let mut c1 = Poly::zero(lde_size)?;
-        self.c0.lde_into(&mut c0, lde_degree)?;
-        self.c1.lde_into(&mut c1, lde_degree)?;
-
-        Ok(ComplexPoly { c0, c1 })
-    }
-
     pub fn evaluate_at_ext(&self, at: &DExt) -> CudaResult<DExt> {
         arith::evaluate_ext_at_ext(self.c0.storage.as_ref(), self.c1.storage.as_ref(), at)
     }
@@ -501,19 +407,6 @@ impl<'a> ComplexPoly<'a, MonomialBasis> {
         let sum_c1 = self.c1.grand_sum()?;
 
         Ok(DExt::new(sum_c0, sum_c1))
-    }
-
-    #[allow(dead_code)]
-    pub fn coset_fft(
-        self,
-        coset_idx: usize,
-        lde_degree: usize,
-    ) -> CudaResult<ComplexPoly<'a, CosetEvaluations>> {
-        let Self { c0, c1 } = self;
-        let c0 = c0.coset_fft(coset_idx, lde_degree)?;
-        let c1 = c1.coset_fft(coset_idx, lde_degree)?;
-
-        Ok(ComplexPoly { c0, c1 })
     }
 
     pub fn into_degree_n_polys(
