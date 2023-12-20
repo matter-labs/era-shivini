@@ -743,10 +743,8 @@ fn gpu_prove_from_trace<
         )?;
     }
 
-    let coset: DF = F::multiplicative_generator().into();
-    quotient.bitreverse()?;
-    let quotient_monomial = quotient.ifft(&coset)?;
-    // quotient memory is guaranteed to allow batch ntts for cosets of the quotinet parts
+    let quotient_monomial = quotient.intt()?;
+    // quotient memory is guaranteed to allow batch ntts for cosets of the quotient parts
     let quotient_chunks = quotient_monomial.clone().into_degree_n_polys(domain_size)?;
 
     let quotient_monomial_storage = GenericComplexPolynomialStorage {
@@ -1713,17 +1711,6 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         polynomials_at_z_omega,
         polynomials_at_zero,
     ))
-}
-
-#[allow(dead_code)]
-pub fn barycentric_evaluate_at_zero(poly: &ComplexPoly<LagrangeBasis>) -> CudaResult<DExt> {
-    let coset: DF = F::multiplicative_generator().into();
-    let mut values = poly.clone();
-    values.bitreverse()?;
-    let monomial = values.ifft(&coset)?;
-    let result = monomial.grand_sum()?;
-
-    Ok(result)
 }
 
 pub fn compute_denom_at_base_point<'a>(

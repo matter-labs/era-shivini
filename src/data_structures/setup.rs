@@ -330,7 +330,7 @@ impl GenericSetupStorage<MonomialBasis> {
         assert_eq!(coset_storage.domain_size(), domain_size);
         assert_eq!(coset_storage.num_polys(), num_polys);
 
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             self.as_single_slice(),
             coset_storage.as_single_slice_mut(),
             coset_idx,
