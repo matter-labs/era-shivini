@@ -37,9 +37,8 @@ pub fn compute_partial_products(
     helpers::set_value(z_poly.c0.storage.as_mut(), &DF::one()?)?;
     helpers::set_zero(z_poly.c1.storage.as_mut())?;
 
-    // TODO: allocate two empty arrays?
-    let mut num: ComplexPoly<LagrangeBasis> = ComplexPoly::zero(domain_size)?;
-    let mut denum: ComplexPoly<LagrangeBasis> = ComplexPoly::zero(domain_size)?;
+    let mut num: ComplexPoly<LagrangeBasis> = ComplexPoly::empty(domain_size)?;
+    let mut denum: ComplexPoly<LagrangeBasis> = ComplexPoly::empty(domain_size)?;
 
     // The "max opt" pattern here would look like some fully fused kernel followed by
     // a single batch inverse followed by another fused kernel.
@@ -69,7 +68,6 @@ pub fn compute_partial_products(
             num_cols_per_product,
             domain_size,
         )?;
-        // TODO use batch inverse
         denum.inverse()?;
         num.mul_assign(&denum)?;
 

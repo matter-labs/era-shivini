@@ -2,6 +2,7 @@ use boojum::cs::{implementations::setup::TreeNode, LookupParameters};
 
 use super::*;
 
+// The incoming quotient is assumed to be empty (not zeroed).
 pub fn compute_quotient_by_coset<'a, 'b>(
     trace_storage: &'a GenericTraceStorage<CosetEvaluations>,
     setup_storage: &'a GenericSetupStorage<CosetEvaluations>,
@@ -34,6 +35,22 @@ where
 {
     let trace_polys = trace_storage.as_polynomials();
     let setup_polys = setup_storage.as_polynomials();
+    let argument_polys = argument_storage.as_polynomials();
+
+    let l0 = compute_l0_over_coset(coset_idx, domain_size, used_lde_degree)?;
+    assert_eq!(l0.storage.len(), domain_size);
+
+    mem::d2d(
+        argument_polys.z_poly.c0.storage.as_ref(),
+        &mut quotient.c0.storage.as_mut(),
+    )?;
+    mem::d2d(
+        argument_polys.z_poly.c1.storage.as_ref(),
+        &mut quotient.c1.storage.as_mut(),
+    )?;
+    quotient.sub_constant(&DExt::one()?)?;
+    quotient.mul_assign_real(&l0)?;
+    quotient.scale(&copy_permutation_challenge_z_at_one_equals_one.into())?;
 
     if specialized_gates.len() > 0 {
         generic_evaluate_constraints_by_coset(
@@ -61,19 +78,6 @@ where
             quotient,
         )?;
     }
-
-    let l0 = compute_l0_over_coset(coset_idx, domain_size, used_lde_degree)?;
-    assert_eq!(l0.storage.len(), domain_size);
-    let l0 = ComplexPoly::<CosetEvaluations>::from_real(l0)?;
-
-    let argument_polys = argument_storage.as_polynomials();
-
-    let mut tmp = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
-    tmp.add_assign(&argument_polys.z_poly)?;
-    tmp.sub_constant(&DExt::one()?)?;
-    tmp.mul_assign(&l0)?;
-    tmp.scale(&copy_permutation_challenge_z_at_one_equals_one.into())?;
-    quotient.add_assign(&tmp)?;
 
     assert_eq!(
         copy_permutation_challenges_partial_product_terms.len(),

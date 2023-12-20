@@ -699,7 +699,7 @@ fn gpu_prove_from_trace<
     let general_purpose_cols_challenge_power_offset =
         total_num_lookup_argument_terms + total_num_gate_terms_for_specialized_columns;
     for coset_idx in 0..quotient_degree {
-        let mut coset_values = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
+        let mut coset_values = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
         let trace_coset_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
         let setup_coset_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
         let argument_coset_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;

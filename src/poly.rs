@@ -148,6 +148,15 @@ impl<'a, P: PolyForm> Poly<'a, P> {
             PolyStorage::Owned(_) => true,
         }
     }
+
+    pub fn empty(domain_size: usize) -> CudaResult<Self> {
+        let storage = dvec!(domain_size);
+        Ok(Self {
+            storage: PolyStorage::Owned(storage),
+            marker: std::marker::PhantomData,
+        })
+    }
+
     pub fn zero(domain_size: usize) -> CudaResult<Self> {
         let mut storage = dvec!(domain_size);
         helpers::set_zero(&mut storage)?;
@@ -249,6 +258,20 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
         c0 && c1
     }
 
+    pub fn empty(domain_size: usize) -> CudaResult<Self> {
+        let mut chunks = dvec!(2 * domain_size)
+            .into_adjacent_chunks(domain_size)
+            .into_iter();
+        let c0 = chunks.next().unwrap();
+        let c1 = chunks.next().unwrap();
+        assert!(chunks.next().is_none());
+
+        Ok(Self {
+            c0: Poly::from(c0),
+            c1: Poly::from(c1),
+        })
+    }
+
     pub fn zero(domain_size: usize) -> CudaResult<Self> {
         let mut chunks = dvec!(2 * domain_size)
             .into_adjacent_chunks(domain_size)
@@ -264,6 +287,7 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
             c1: Poly::from(c1),
         })
     }
+
     pub fn one(domain_size: usize) -> CudaResult<Self> {
         let mut chunks = dvec!(2 * domain_size)
             .into_adjacent_chunks(domain_size)
@@ -529,10 +553,7 @@ macro_rules! impl_common_poly {
 
             #[allow(dead_code)]
             pub fn sub_assign<'b>(&mut self, other: &Poly<'b, $form>) -> CudaResult<()> {
-                let mut other = other.clone();
-                other.negate()?;
-                // arith::sub_assign(self.storage.as_mut(), other.storage.as_ref())
-                arith::add_assign(self.storage.as_mut(), other.storage.as_ref())
+                arith::sub_assign(self.storage.as_mut(), other.storage.as_ref())
             }
 
             #[allow(dead_code)]
@@ -554,10 +575,7 @@ macro_rules! impl_common_poly {
 
             #[allow(dead_code)]
             pub fn sub_constant(&mut self, value: &DF) -> CudaResult<()> {
-                let mut h_value: F = value.clone().into();
-                h_value.negate();
-                let value: DF = h_value.into();
-                arith::add_constant(self.storage.as_mut(), &value)
+                arith::sub_constant(self.storage.as_mut(), &value)
             }
 
             #[allow(dead_code)]
@@ -672,6 +690,16 @@ macro_rules! impl_common_complex_poly {
                 self.c1.mul_assign(&other.c0)?;
                 self.c1.add_assign(&self.c0)?;
                 mem::d2d(&t0.storage.as_ref(), self.c0.storage.as_mut())?;
+
+                Ok(())
+            }
+
+            #[allow(dead_code)]
+            pub fn mul_assign_real<'b>(&mut self, other: &Poly<'b, $form>) -> CudaResult<()> {
+                assert_eq!(self.c0.storage.len(), other.storage.len());
+                assert_eq!(self.c1.storage.len(), other.storage.len());
+                self.c0.mul_assign(&other)?;
+                self.c1.mul_assign(&other)?;
 
                 Ok(())
             }

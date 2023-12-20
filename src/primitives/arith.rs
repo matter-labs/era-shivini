@@ -18,7 +18,6 @@ pub fn add_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
     add_into_x(this, other, get_stream())
 }
 
-#[allow(dead_code)]
 pub fn sub_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
     assert_eq!(this.len(), other.len());
     let (this, other) = unsafe {
