@@ -1098,7 +1098,7 @@ fn gpu_prove_from_trace<
             .stats
             .lock()
             .unwrap()
-            .print(true);
+            .print(true, true);
     }
 
     gpu_proof.public_inputs = public_inputs;
