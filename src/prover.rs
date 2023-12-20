@@ -32,8 +32,6 @@ use crate::{
 
 use super::*;
 
-use nvtx::{range_pop, range_push};
-
 pub fn gpu_prove_from_external_witness_data<
     P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     TR: Transcript<F, CompatibleCap = [F; 4]>,
@@ -745,10 +743,8 @@ fn gpu_prove_from_trace<
         )?;
     }
 
-    range_push!("quotient evals to monomial");
     let quotient_monomial = quotient.intt()?;
-    range_pop!();
-    // quotient memory is guaranteed to allow batch ntts for cosets of the quotinet parts
+    // quotient memory is guaranteed to allow batch ntts for cosets of the quotient parts
     let quotient_chunks = quotient_monomial.clone().into_degree_n_polys(domain_size)?;
 
     let quotient_monomial_storage = GenericComplexPolynomialStorage {

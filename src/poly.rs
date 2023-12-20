@@ -22,8 +22,6 @@ pub(crate) struct PrecomputedBasisForBarycentric {
     pub(crate) bases: DVec<F>,
 }
 
-use nvtx::{range_pop, range_push};
-
 impl PrecomputedBasisForBarycentric {
     pub fn precompute(domain_size: usize, point: EF) -> CudaResult<Self> {
         let mut bases = dvec!(2 * domain_size);
@@ -290,9 +288,7 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
 
 impl<'a> Poly<'a, LDE> {
     pub fn intt(mut self) -> CudaResult<Poly<'a, MonomialBasis>> {
-        range_push!("Poly<LDE> intt");
         ntt::lde_intt(self.storage.as_mut())?;
-        range_pop!();
         Ok(Poly {
             storage: self.storage,
             marker: std::marker::PhantomData,
