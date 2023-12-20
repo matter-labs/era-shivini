@@ -8,9 +8,6 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-#[cfg(feature = "allocator_stats")]
-use std::sync::atomic::AtomicUsize;
-
 pub const FREE_MEMORY_SLACK: usize = 1 << 23; // 8 MB
 #[cfg(feature = "recompute")]
 pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1340 + 32;
@@ -27,16 +24,117 @@ pub struct StaticDeviceAllocator {
     // TODO: Can we use deque
     bitmap: Arc<Vec<AtomicBool>>,
     #[cfg(feature = "allocator_stats")]
-    maximum_tail_index: Arc<AtomicUsize>,
+    pub stats: Arc<std::sync::Mutex<stats::AllocationStats>>,
 }
 
 #[cfg(feature = "allocator_stats")]
-#[derive(Derivative)]
-#[derivative(Clone, Debug)]
-pub struct AllocationStats {
-    pub current_block_count: usize,
-    pub current_tail_index: usize,
-    pub maximum_tail_index: usize,
+mod stats {
+    use derivative::Derivative;
+    use std::collections::BTreeMap;
+
+    #[derive(Derivative)]
+    #[derivative(Clone, Debug, Default)]
+    pub struct Allocations(BTreeMap<usize, (usize, String)>);
+
+    impl Allocations {
+        fn insert(&mut self, index: usize, size: usize, backtrace: String) {
+            self.0.insert(index, (size, backtrace));
+        }
+
+        fn remove(&mut self, index: &usize) {
+            self.0.remove(index);
+        }
+
+        fn block_count(&self) -> usize {
+            self.0.values().map(|&(size, _)| size).sum()
+        }
+
+        pub fn tail_index(&self) -> usize {
+            self.0
+                .last_key_value()
+                .map_or(0, |(&index, &(size, _))| index + size)
+        }
+
+        fn print(&self, detailed: bool, with_backtrace: bool) {
+            assert!(detailed || !with_backtrace);
+            if self.0.is_empty() {
+                println!("no allocations");
+                return;
+            }
+            println!("block_count: {}", self.block_count());
+            println!("tail_index: {}", self.tail_index());
+            const SEPARATOR: &str = "================================";
+            println!("{SEPARATOR}");
+            if detailed {
+                let mut last_index = 0;
+                for (index, (length, trace)) in &self.0 {
+                    let gap = index - last_index;
+                    last_index = index + length;
+                    if gap != 0 {
+                        println!("gap: {gap}");
+                        println!("{SEPARATOR}");
+                    }
+                    println!("index: {index}");
+                    println!("length: {length}");
+                    if with_backtrace {
+                        println!("backtrace: \n{trace}");
+                    }
+                    println!("{SEPARATOR}");
+                }
+            }
+        }
+    }
+
+    #[derive(Derivative)]
+    #[derivative(Clone, Debug, Default)]
+    pub struct AllocationStats {
+        pub allocations: Allocations,
+        pub allocations_at_maximum_block_count: Allocations,
+        pub allocations_at_maximum_block_count_at_maximum_tail_index: Allocations,
+    }
+
+    impl AllocationStats {
+        pub fn alloc(&mut self, index: usize, size: usize, backtrace: String) {
+            self.allocations.insert(index, size, backtrace);
+            let current_block_count = self.allocations.block_count();
+            let current_tail_index = self.allocations.tail_index();
+            let previous_maximum_block_count =
+                self.allocations_at_maximum_block_count.block_count();
+            if current_block_count > previous_maximum_block_count {
+                self.allocations_at_maximum_block_count = self.allocations.clone();
+            }
+            let previous_maximum_tail_index = self
+                .allocations_at_maximum_block_count_at_maximum_tail_index
+                .tail_index();
+            if current_tail_index > previous_maximum_tail_index {
+                self.allocations_at_maximum_block_count_at_maximum_tail_index =
+                    self.allocations.clone();
+            } else if current_tail_index == previous_maximum_tail_index {
+                let previous_maximum_block_count_at_maximum_tail_index = self
+                    .allocations_at_maximum_block_count_at_maximum_tail_index
+                    .block_count();
+                if current_block_count > previous_maximum_block_count_at_maximum_tail_index {
+                    self.allocations_at_maximum_block_count_at_maximum_tail_index =
+                        self.allocations.clone();
+                }
+            }
+        }
+
+        pub fn free(&mut self, index: usize) {
+            self.allocations.remove(&index);
+        }
+
+        pub fn print(&self, detailed: bool, with_backtrace: bool) {
+            println!("allocations:");
+            self.allocations.print(detailed, with_backtrace);
+            println!("allocations_at_maximum_block_count:");
+            self.allocations_at_maximum_block_count
+                .print(detailed, with_backtrace);
+            println!("allocations_at_maximum_block_count_at_maximum_tail_index:");
+            self.allocations_at_maximum_block_count_at_maximum_tail_index
+                .print(detailed, with_backtrace);
+        }
+    }
 }
 
 impl Default for StaticDeviceAllocator {
@@ -88,7 +186,7 @@ impl StaticDeviceAllocator {
             block_size_in_bytes,
             bitmap: Arc::new(Self::init_bitmap(num_blocks)),
             #[cfg(feature = "allocator_stats")]
-            maximum_tail_index: Arc::new(AtomicUsize::new(0)),
+            stats: Arc::new(std::sync::Mutex::new(Default::default())),
         };
 
         Ok(alloc)
@@ -187,26 +285,26 @@ impl StaticDeviceAllocator {
         memory.free()?;
         Ok(())
     }
-
-    #[cfg(feature = "allocator_stats")]
-    pub fn get_allocation_stats(&self) -> AllocationStats {
-        let (count, max) = self
-            .bitmap
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.load(Ordering::SeqCst))
-            .map(|(i, _)| i)
-            .fold((0usize, 0usize), |(c, _), i| (c + 1, i + 1));
-        AllocationStats {
-            current_block_count: count,
-            current_tail_index: max,
-            maximum_tail_index: self.maximum_tail_index.load(Ordering::SeqCst),
-        }
-    }
 }
 
 unsafe impl Send for StaticDeviceAllocator {}
 unsafe impl Sync for StaticDeviceAllocator {}
+
+#[cfg(feature = "allocator_stats")]
+macro_rules! backtrace {
+    () => {{
+        let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+        let mut x: Vec<&str> = backtrace
+            .split('\n')
+            .rev()
+            .skip_while(|&s| !s.contains("shivini"))
+            .take_while(|&s| !s.contains("backtrace"))
+            .collect();
+        x.reverse();
+        let backtrace: String = x.join("\n");
+        backtrace
+    }};
+}
 
 unsafe impl Allocator for StaticDeviceAllocator {
     #[allow(unreachable_code)]
@@ -219,8 +317,10 @@ unsafe impl Allocator for StaticDeviceAllocator {
             let num_blocks = size / self.block_size_in_bytes;
             if let Some(range) = self.find_adjacent_free_blocks(num_blocks) {
                 #[cfg(feature = "allocator_stats")]
-                self.maximum_tail_index
-                    .fetch_max(range.end, Ordering::SeqCst);
+                self.stats
+                    .lock()
+                    .unwrap()
+                    .alloc(range.start, num_blocks, backtrace!());
                 let index = range.start;
                 let offset = index * self.block_size_in_bytes;
                 let ptr = unsafe { self.as_ptr().add(offset) };
@@ -233,8 +333,7 @@ unsafe impl Allocator for StaticDeviceAllocator {
 
         if let Some(index) = self.find_free_block() {
             #[cfg(feature = "allocator_stats")]
-            self.maximum_tail_index
-                .fetch_max(index + 1, Ordering::SeqCst);
+            self.stats.lock().unwrap().alloc(index, 1, backtrace!());
             let offset = index * self.block_size_in_bytes;
             let ptr = unsafe { self.as_ptr().add(offset) };
             let ptr = unsafe { NonNull::new_unchecked(ptr as _) };
@@ -261,6 +360,8 @@ unsafe impl Allocator for StaticDeviceAllocator {
         for actual_idx in index..index + num_blocks {
             self.free_block(actual_idx);
         }
+        #[cfg(feature = "allocator_stats")]
+        self.stats.lock().unwrap().free(index);
     }
 }
 
@@ -283,11 +384,6 @@ impl SmallStaticDeviceAllocator {
 
     pub fn block_size_in_bytes(&self) -> usize {
         self.inner.block_size_in_bytes
-    }
-
-    #[cfg(feature = "allocator_stats")]
-    pub fn get_allocation_stats(&self) -> AllocationStats {
-        self.inner.get_allocation_stats()
     }
 }
 

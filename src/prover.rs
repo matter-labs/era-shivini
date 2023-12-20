@@ -99,7 +99,7 @@ pub fn gpu_prove_from_external_witness_data<
     {
         let variable_idx = setup.variables_hint[col][row].clone() as usize;
         assert_eq!(
-            variable_idx & (1 << 31),
+            variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
             0,
             "placeholder found in a public input location"
         );
@@ -1090,11 +1090,13 @@ fn gpu_prove_from_trace<
     println!("FRI Queries are done {:?}", time.elapsed());
     #[cfg(feature = "allocator_stats")]
     unsafe {
-        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
-        dbg!(_SMALL_DEVICE_ALLOCATOR
+        _DEVICE_ALLOCATOR
             .as_ref()
             .unwrap()
-            .get_allocation_stats());
+            .stats
+            .lock()
+            .unwrap()
+            .print(true, true);
     }
 
     gpu_proof.public_inputs = public_inputs;
