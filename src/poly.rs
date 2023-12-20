@@ -617,7 +617,7 @@ macro_rules! impl_common_complex_poly {
     ($form:tt) => {
         impl<'a> ComplexPoly<'a, $form> {
             #[allow(dead_code)]
-            pub fn from_real(c0: Poly<'a, $form>) -> CudaResult<ComplexPoly<'a, $form>> {
+            pub fn from_real(c0: &Poly<'a, $form>) -> CudaResult<ComplexPoly<'a, $form>> {
                 assert!(c0.is_owned());
                 let domain_size = c0.storage.len();
                 assert!(domain_size.is_power_of_two());

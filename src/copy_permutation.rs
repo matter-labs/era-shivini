@@ -151,7 +151,7 @@ where
         rhs.push(p);
     }
     assert_eq!(lhs.len(), rhs.len());
-    let omega_values = ComplexPoly::<CosetEvaluations>::from_real(omega_values.clone())?;
+    let omega_values = ComplexPoly::<CosetEvaluations>::from_real(omega_values)?;
 
     for (
         ((((existing_lhs, existing_rhs), variable_cols_chunk), sigma_cols_chunk), alpha),
@@ -180,7 +180,7 @@ where
             current_num.add_constant(&gamma)?;
 
             // dnumerator w + beta * sigma(x) + gamma
-            let mut current_denum = ComplexPoly::<CosetEvaluations>::from_real(sigma_col.clone())?;
+            let mut current_denum = ComplexPoly::<CosetEvaluations>::from_real(sigma_col)?;
             current_denum.scale_real(&beta)?;
             current_denum.add_assign_real(&variable_col)?;
             current_denum.add_constant(&gamma)?;
