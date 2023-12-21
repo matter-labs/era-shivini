@@ -194,7 +194,7 @@ impl<T> DVec<T, StaticDeviceAllocator> {
         let mut data = Vec::with_capacity_in(padded_cap, alloc);
         unsafe {
             data.set_len(cap);
-            helpers::set_zero_generic(&mut data).expect("zeroize");
+            // helpers::set_zero_generic(&mut data).expect("zeroize");
         }
         Self { data }
     }
@@ -304,7 +304,7 @@ impl<T> SVec<T> {
 
         let mut data = Vec::with_capacity_in(padded_cap, alloc);
         unsafe {
-            helpers::set_zero_generic(&mut data).expect("zeroize");
+            // helpers::set_zero_generic(&mut data).expect("zeroize");
             data.set_len(cap);
         }
         Self { data }

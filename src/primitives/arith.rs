@@ -39,6 +39,39 @@ pub fn mul_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
     mul_into_x(this, other, get_stream())
 }
 
+pub fn mul_assign_complex(
+    c0_this: &mut [F],
+    c1_this: &mut [F],
+    c0_other: &[F],
+    c1_other: &[F],
+) -> CudaResult<()> {
+    use std::slice;
+    type VEF = VectorizedExtensionField;
+
+    let domain_size = c0_this.len();
+    assert_eq!(domain_size, c0_other.len());
+
+    let c0_this_ptr = c0_this.as_ptr();
+    unsafe {
+        assert_eq!(c0_this_ptr.add(domain_size), c1_this.as_ptr());
+    }
+    let this_ptr = c0_this_ptr as *mut VEF;
+    let mut this_slice: &mut [VEF] =
+        unsafe { slice::from_raw_parts_mut(this_ptr, domain_size) };
+    let this_vector = unsafe { DeviceSlice::from_mut_slice(&mut this_slice) };
+
+    let c0_other_ptr = c0_other.as_ptr();
+    unsafe {
+        assert_eq!(c0_other_ptr.add(domain_size), c1_other.as_ptr());
+    }
+    let other_ptr = c0_other_ptr as *const VEF;
+    let other_slice: &[VEF] =
+        unsafe { slice::from_raw_parts(other_ptr, domain_size) };
+    let other_vector = unsafe { DeviceSlice::from_slice(&other_slice) };
+
+    mul_into_x(this_vector, other_vector, get_stream())
+}
+
 pub fn add_constant(this: &mut [F], value: &DF) -> CudaResult<()> {
     let (this, value) = unsafe {
         let this = DeviceSlice::from_mut_slice(this);

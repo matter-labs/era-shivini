@@ -569,22 +569,12 @@ macro_rules! impl_common_complex_poly {
 
             #[allow(dead_code)]
             pub fn mul_assign<'b>(&mut self, other: &ComplexPoly<'b, $form>) -> CudaResult<()> {
-                let non_residue = DF::non_residue()?;
-
-                let mut t0 = self.c0.clone();
-                let mut t1 = self.c1.clone();
-
-                t0.mul_assign(&other.c0)?;
-                t1.mul_assign(&other.c1)?;
-                t1.scale(&non_residue)?;
-                t0.add_assign(&t1)?;
-
-                self.c0.mul_assign(&other.c1)?;
-                self.c1.mul_assign(&other.c0)?;
-                self.c1.add_assign(&self.c0)?;
-                mem::d2d(&t0.storage.as_ref(), self.c0.storage.as_mut())?;
-
-                Ok(())
+                arith::mul_assign_complex(
+                    self.c0.storage.as_mut(),
+                    self.c1.storage.as_mut(),
+                    other.c0.storage.as_ref(),
+                    other.c1.storage.as_ref(),
+                )
             }
 
             #[allow(dead_code)]
