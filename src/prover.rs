@@ -32,7 +32,7 @@ use crate::{
 
 use super::*;
 
-use nvtx::{range_push, range_pop};
+use nvtx::{range_pop, range_push};
 
 pub fn gpu_prove_from_external_witness_data<
     P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
