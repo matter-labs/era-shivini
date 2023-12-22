@@ -32,8 +32,6 @@ use crate::{
 
 use super::*;
 
-use nvtx::{range_pop, range_push};
-
 pub fn gpu_prove_from_external_witness_data<
     P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     TR: Transcript<F, CompatibleCap = [F; 4]>,
@@ -702,12 +700,9 @@ fn gpu_prove_from_trace<
         total_num_lookup_argument_terms + total_num_gate_terms_for_specialized_columns;
     for coset_idx in 0..quotient_degree {
         let mut coset_values = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
-        range_push!("get_or_compute_coset_evals");
         let trace_coset_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
         let setup_coset_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
         let argument_coset_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;
-        range_pop!();
-        range_push!("compute_quotient_by_coset");
         compute_quotient_by_coset(
             &trace_coset_values,
             &setup_coset_values,
@@ -735,7 +730,6 @@ fn gpu_prove_from_trace<
             variables_offset,
             &mut coset_values,
         )?;
-        range_pop!();
 
         let start = coset_idx * domain_size;
         let end = start + domain_size;

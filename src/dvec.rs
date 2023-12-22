@@ -354,7 +354,7 @@ impl DF {
     }
 
     pub fn empty() -> CudaResult<Self> {
-        let mut storage = svec!(1);
+        let storage = svec!(1);
 
         Ok(Self { inner: storage })
     }
@@ -448,6 +448,7 @@ impl DExt {
         Ok(Self { c0, c1 })
     }
 
+    #[allow(dead_code)]
     pub fn zero() -> CudaResult<Self> {
         let c0 = DF::zero()?;
         let c1 = DF::zero()?;

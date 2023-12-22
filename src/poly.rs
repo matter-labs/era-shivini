@@ -90,6 +90,7 @@ impl<'a> PolyStorage<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn copy_from_device_slice(&mut self, other: &[F]) -> CudaResult<()> {
         match self {
             PolyStorage::Borrowed(_) => unimplemented!(),
@@ -149,6 +150,7 @@ impl<'a, P: PolyForm> Poly<'a, P> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn empty(domain_size: usize) -> CudaResult<Self> {
         let storage = dvec!(domain_size);
         Ok(Self {
@@ -157,6 +159,7 @@ impl<'a, P: PolyForm> Poly<'a, P> {
         })
     }
 
+    #[allow(dead_code)]
     pub fn zero(domain_size: usize) -> CudaResult<Self> {
         let mut storage = dvec!(domain_size);
         helpers::set_zero(&mut storage)?;

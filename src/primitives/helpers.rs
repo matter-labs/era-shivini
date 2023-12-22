@@ -98,7 +98,6 @@ pub fn set_value_generic<T: SetByRef>(buffer: &mut [T], value: &T) -> CudaResult
     set_by_ref(value, buffer, get_stream())
 }
 
-#[allow(dead_code)]
 pub fn set_by_value<T: SetByVal>(
     buffer: &mut [T],
     value: T,
@@ -114,6 +113,7 @@ pub fn set_zero(buffer: &mut [F]) -> CudaResult<()> {
     set_to_zero(buffer, get_stream())
 }
 
+#[allow(dead_code)]
 pub fn set_zero_generic<T>(buffer: &mut [T]) -> CudaResult<()> {
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
     set_to_zero(buffer, get_stream())

@@ -435,6 +435,8 @@ pub fn precompute_barycentric_bases(
     // shift is k*w^0=k where k is multiplicative generator
 
     // The following does NOT work ("the trait `SetByVal` is not implemented" for EF)
+    // TODO: Use it if we ever add EF support for pointwise ops in boojum-cuda.
+    // For now that seems like overkill.
     // let mut d_point: DVec<EF, _> = svec!(1);
     // helpers::set_by_value(d_point.as_mut(), point, get_stream());
 
@@ -442,8 +444,8 @@ pub fn precompute_barycentric_bases(
     // It's a little ugly but avoids potentially synchronizing copies.
     let mut coeffs: DVec<F, _> = svec!(2);
     let [c0, c1] = point.into_coeffs_in_base();
-    helpers::set_by_value(coeffs[..1].as_mut(), c0, get_stream());
-    helpers::set_by_value(coeffs[1..].as_mut(), c1, get_stream());
+    helpers::set_by_value(coeffs[..1].as_mut(), c0, get_stream())?;
+    helpers::set_by_value(coeffs[1..].as_mut(), c1, get_stream())?;
     let d_point_ef = unsafe { std::slice::from_raw_parts(coeffs.as_ptr() as *const EF, 1) };
     let d_point_ef_var = unsafe { DeviceVariable::from_ref(&d_point_ef[0]) };
 
