@@ -37,9 +37,8 @@ pub fn compute_partial_products(
     helpers::set_value(z_poly.c0.storage.as_mut(), &DF::one()?)?;
     helpers::set_zero(z_poly.c1.storage.as_mut())?;
 
-    // TODO: allocate two empty arrays?
-    let mut num: ComplexPoly<LagrangeBasis> = ComplexPoly::zero(domain_size)?;
-    let mut denum: ComplexPoly<LagrangeBasis> = ComplexPoly::zero(domain_size)?;
+    let mut num: ComplexPoly<LagrangeBasis> = ComplexPoly::empty(domain_size)?;
+    let mut denum: ComplexPoly<LagrangeBasis> = ComplexPoly::empty(domain_size)?;
 
     // The "max opt" pattern here would look like some fully fused kernel followed by
     // a single batch inverse followed by another fused kernel.
@@ -69,7 +68,6 @@ pub fn compute_partial_products(
             num_cols_per_product,
             domain_size,
         )?;
-        // TODO use batch inverse
         denum.inverse()?;
         num.mul_assign(&denum)?;
 
@@ -153,7 +151,7 @@ where
         rhs.push(p);
     }
     assert_eq!(lhs.len(), rhs.len());
-    let omega_values = ComplexPoly::<CosetEvaluations>::from_real(omega_values.clone())?;
+    let omega_values = ComplexPoly::<CosetEvaluations>::from_real(omega_values)?;
 
     for (
         ((((existing_lhs, existing_rhs), variable_cols_chunk), sigma_cols_chunk), alpha),
@@ -182,7 +180,7 @@ where
             current_num.add_constant(&gamma)?;
 
             // dnumerator w + beta * sigma(x) + gamma
-            let mut current_denum = ComplexPoly::<CosetEvaluations>::from_real(sigma_col.clone())?;
+            let mut current_denum = ComplexPoly::<CosetEvaluations>::from_real(sigma_col)?;
             current_denum.scale_real(&beta)?;
             current_denum.add_assign_real(&variable_col)?;
             current_denum.add_constant(&gamma)?;
