@@ -263,7 +263,7 @@ impl<'a> GenericComplexPolynomialStorage<'a, MonomialBasis> {
         let num_polys = self.polynomials.len();
         let domain_size = self.polynomials[0].domain_size();
         let num_coset_ffts = 2 * num_polys;
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             self.as_single_slice(),
             result.as_single_slice_mut(),
             coset_idx,

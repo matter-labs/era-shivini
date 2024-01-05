@@ -190,6 +190,7 @@ pub fn multi_polys_as_single_slice_mut<'a, P: PolyForm>(polys: &mut [Poly<'a, P>
     unsafe { std::slice::from_raw_parts_mut(polys.as_ptr() as _, polys.len()) }
 }
 
+// Accumulates into quotient
 pub fn generic_evaluate_constraints_by_coset<'a, 'b>(
     trace_polys: &TracePolynomials<'a, CosetEvaluations>,
     setup_polys: &SetupPolynomials<'a, CosetEvaluations>,
@@ -208,10 +209,13 @@ where
         quotient.domain_size()
     );
 
-    let mut tmp = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
     let quotient_as_single_slice = unsafe {
-        let len = 2 * tmp.domain_size();
-        std::slice::from_raw_parts_mut(tmp.c0.storage.as_mut().as_mut_ptr(), len)
+        assert_eq!(
+            quotient.c0.storage.as_ref().as_ptr().add(domain_size),
+            quotient.c1.storage.as_ref().as_ptr()
+        );
+        let len = 2 * quotient.domain_size();
+        std::slice::from_raw_parts_mut(quotient.c0.storage.as_mut().as_mut_ptr(), len)
     };
     let TracePolynomials {
         variable_cols,
@@ -234,8 +238,6 @@ where
         quotient_as_single_slice,
         domain_size,
     )?;
-
-    quotient.add_assign(&tmp)?;
 
     Ok(())
 }

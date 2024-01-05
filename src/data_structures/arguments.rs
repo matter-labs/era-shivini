@@ -191,7 +191,7 @@ impl<'a> GenericArgumentStorage<'a, MonomialBasis> {
         let domain_size = self.domain_size();
 
         let num_coset_ffts = 2 * num_polys;
-        ntt::batch_coset_fft_into(
+        ntt::batch_coset_ntt_into(
             self.storage.as_single_slice(),
             coset_storage.storage.as_single_slice_mut(),
             coset_idx,

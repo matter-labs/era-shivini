@@ -747,11 +747,13 @@ mod zksync {
 
     use super::*;
 
+    use crate::cs::PACKED_PLACEHOLDER_BITMASK;
     use boojum::cs::implementations::fast_serialization::MemcopySerializable;
     use circuit_definitions::{
         aux_definitions::witness_oracle::VmWitnessOracle,
         circuit_definitions::base_layer::ZkSyncBaseLayerCircuit, ZkSyncDefaultRoundFunction,
     };
+
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 
     const TEST_DATA_ROOT_DIR: &str = "./test_data";
@@ -1213,7 +1215,7 @@ mod zksync {
         )
         .expect("gpu setup");
         witness.public_inputs_locations = vec![(0, 0)];
-        gpu_setup.variables_hint[0][0] = 1 << 31;
+        gpu_setup.variables_hint[0][0] = PACKED_PLACEHOLDER_BITMASK;
         let _ = gpu_prove_from_external_witness_data::<
             _,
             DefaultTranscript,

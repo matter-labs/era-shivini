@@ -156,7 +156,7 @@ impl<T, A: StaticAllocator> DVec<T, A> {
 
 impl DVec<F> {
     pub fn get(&self, pos: usize) -> CudaResult<DF> {
-        let mut el = DF::zero()?;
+        let mut el = DF::empty()?;
         mem::d2d(&self.data[pos..pos + 1], &mut el.inner[..])?;
         Ok(el)
     }
@@ -194,7 +194,7 @@ impl<T> DVec<T, StaticDeviceAllocator> {
         let mut data = Vec::with_capacity_in(padded_cap, alloc);
         unsafe {
             data.set_len(cap);
-            helpers::set_zero_generic(&mut data).expect("zeroize");
+            // helpers::set_zero_generic(&mut data).expect("zeroize");
         }
         Self { data }
     }
@@ -304,7 +304,7 @@ impl<T> SVec<T> {
 
         let mut data = Vec::with_capacity_in(padded_cap, alloc);
         unsafe {
-            helpers::set_zero_generic(&mut data).expect("zeroize");
+            // helpers::set_zero_generic(&mut data).expect("zeroize");
             data.set_len(cap);
         }
         Self { data }
@@ -330,7 +330,7 @@ pub struct DF {
 
 impl Clone for DF {
     fn clone(&self) -> Self {
-        let mut new = Self::zero().unwrap();
+        let mut new = Self::empty().unwrap();
         new.inner
             .copy_from_device_slice(&self.inner)
             .expect("copy device value");
@@ -353,39 +353,45 @@ impl DF {
         _small_alloc().clone()
     }
 
+    pub fn empty() -> CudaResult<Self> {
+        let storage = svec!(1);
+
+        Ok(Self { inner: storage })
+    }
+
     pub fn zero() -> CudaResult<Self> {
         let mut storage = svec!(1);
-        storage.copy_from_slice(&[F::ZERO])?;
+        helpers::set_by_value(storage.as_mut(), F::ZERO, get_stream())?;
 
         Ok(Self { inner: storage })
     }
 
     pub fn one() -> CudaResult<Self> {
-        let mut this = Self::zero()?;
-        this.copy_from_host_value(&F::ONE)?;
+        let mut storage = svec!(1);
+        helpers::set_by_value(storage.as_mut(), F::ONE, get_stream())?;
 
-        Ok(this)
+        Ok(Self { inner: storage })
     }
 
     pub fn non_residue() -> CudaResult<Self> {
         let non_residue = F::from_raw_u64_unchecked(7);
-        let mut this = Self::zero()?;
-        this.copy_from_host_value(&non_residue)?;
+        let mut storage = svec!(1);
+        helpers::set_by_value(storage.as_mut(), non_residue, get_stream())?;
 
-        Ok(this)
+        Ok(Self { inner: storage })
     }
 
     pub fn copy_from_host_value(&mut self, value: &F) -> CudaResult<()> {
-        self.inner.copy_from_slice(&[*value])?;
+        helpers::set_by_value(self.inner.as_mut(), value.clone(), get_stream())?;
 
         Ok(())
     }
 
     pub fn from_host_value(value: &F) -> CudaResult<Self> {
-        let mut this = Self::zero()?;
-        this.inner.copy_from_slice(&[*value])?;
+        let mut storage = svec!(1);
+        helpers::set_by_value(storage.as_mut(), value.clone(), get_stream())?;
 
-        Ok(this)
+        Ok(Self { inner: storage })
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut F {
@@ -402,7 +408,7 @@ impl Into<F> for DF {
 
 impl From<F> for DF {
     fn from(value: F) -> Self {
-        let mut this = Self::zero().expect("");
+        let mut this = Self::empty().expect("");
         this.copy_from_host_value(&value).expect("");
         this
     }
@@ -410,7 +416,7 @@ impl From<F> for DF {
 
 impl From<&F> for DF {
     fn from(value: &F) -> Self {
-        let mut this = Self::zero().expect("");
+        let mut this = Self::empty().expect("");
         this.copy_from_host_value(value).expect("");
         this
     }
@@ -435,6 +441,14 @@ impl DExt {
         Self { c0, c1 }
     }
 
+    pub fn empty() -> CudaResult<Self> {
+        let c0 = DF::empty()?;
+        let c1 = DF::empty()?;
+
+        Ok(Self { c0, c1 })
+    }
+
+    #[allow(dead_code)]
     pub fn zero() -> CudaResult<Self> {
         let c0 = DF::zero()?;
         let c1 = DF::zero()?;
@@ -474,7 +488,7 @@ impl Into<EF> for DExt {
 
 impl From<EF> for DExt {
     fn from(value: EF) -> Self {
-        let mut this = Self::zero().expect("");
+        let mut this = Self::empty().expect("");
         this.copy_from_host_value(&value).expect("");
         this
     }
@@ -482,7 +496,7 @@ impl From<EF> for DExt {
 
 impl From<&EF> for DExt {
     fn from(value: &EF) -> Self {
-        let mut this = Self::zero().expect("");
+        let mut this = Self::empty().expect("");
         this.copy_from_host_value(value).expect("");
         this
     }

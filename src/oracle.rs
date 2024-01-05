@@ -401,7 +401,7 @@ pub fn batch_query_leaf_sources<A: GoodAllocator>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::ntt::{batch_bitreverse, batch_ntt, coset_fft_into};
+    use crate::primitives::ntt::{batch_bitreverse, batch_ntt, coset_ntt_into};
     use boojum::cs::implementations::transcript::Transcript;
     use boojum::field::U64Representable;
     use serial_test::serial;
@@ -574,7 +574,7 @@ mod tests {
             .zip(d_storage.chunks_mut(domain_size * lde_degree))
         {
             for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
-                coset_fft_into(
+                coset_ntt_into(
                     v,
                     c,
                     bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),
@@ -730,7 +730,7 @@ mod tests {
             .zip(d_storage.chunks_mut(domain_size * lde_degree))
         {
             for (coset_idx, c) in s.chunks_mut(domain_size).enumerate() {
-                coset_fft_into(
+                coset_ntt_into(
                     v,
                     c,
                     bitreverse_index(coset_idx, lde_degree.trailing_zeros() as usize),

@@ -98,7 +98,7 @@ pub fn gpu_prove_from_external_witness_data<
     {
         let variable_idx = setup.variables_hint[col][row].clone() as usize;
         assert_eq!(
-            variable_idx & (1 << 31),
+            variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
             0,
             "placeholder found in a public input location"
         );
@@ -677,7 +677,7 @@ fn gpu_prove_from_trace<
     // asynchronous H2D copies complete before h_vec gets dropped.
     copy_permutation_challenges_partial_product_terms.copy_from_slice(&h_vec)?;
 
-    let mut quotient = ComplexPoly::<LDE>::zero(quotient_degree * domain_size)?;
+    let mut quotient = ComplexPoly::<LDE>::empty(quotient_degree * domain_size)?;
     let base_monomial_setup = raw_setup.into_monomials()?;
     let mut setup_holder =
         SetupCache::from_monomial(base_monomial_setup, fri_lde_degree, used_lde_degree)?;
@@ -698,7 +698,7 @@ fn gpu_prove_from_trace<
     let general_purpose_cols_challenge_power_offset =
         total_num_lookup_argument_terms + total_num_gate_terms_for_specialized_columns;
     for coset_idx in 0..quotient_degree {
-        let mut coset_values = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
+        let mut coset_values = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
         let trace_coset_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
         let setup_coset_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
         let argument_coset_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;
@@ -742,10 +742,8 @@ fn gpu_prove_from_trace<
         )?;
     }
 
-    let coset: DF = F::multiplicative_generator().into();
-    quotient.bitreverse()?;
-    let quotient_monomial = quotient.ifft(&coset)?;
-    // quotient memory is guaranteed to allow batch ntts for cosets of the quotinet parts
+    let quotient_monomial = quotient.intt()?;
+    // quotient memory is guaranteed to allow batch ntts for cosets of the quotient parts
     let quotient_chunks = quotient_monomial.clone().into_degree_n_polys(domain_size)?;
 
     let quotient_monomial_storage = GenericComplexPolynomialStorage {
@@ -842,7 +840,7 @@ fn gpu_prove_from_trace<
     let mut challenges = dvec!(h_challenges.len());
     challenges.copy_from_slice(&h_challenges)?;
 
-    let mut deep_quotient = ComplexPoly::<LDE>::zero(fri_lde_degree * domain_size)?;
+    let mut deep_quotient = ComplexPoly::<LDE>::empty(fri_lde_degree * domain_size)?;
     let z = h_z.clone().into();
     let z_omega = h_z_omega.clone().into();
     for coset_idx in 0..fri_lde_degree {
@@ -1090,11 +1088,13 @@ fn gpu_prove_from_trace<
     println!("FRI Queries are done {:?}", time.elapsed());
     #[cfg(feature = "allocator_stats")]
     unsafe {
-        dbg!(_DEVICE_ALLOCATOR.as_ref().unwrap().get_allocation_stats());
-        dbg!(_SMALL_DEVICE_ALLOCATOR
+        _DEVICE_ALLOCATOR
             .as_ref()
             .unwrap()
-            .get_allocation_stats());
+            .stats
+            .lock()
+            .unwrap()
+            .print(true, true);
     }
 
     gpu_proof.public_inputs = public_inputs;
@@ -1711,26 +1711,12 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
     ))
 }
 
-#[allow(dead_code)]
-pub fn barycentric_evaluate_at_zero(poly: &ComplexPoly<LagrangeBasis>) -> CudaResult<DExt> {
-    let coset: DF = F::multiplicative_generator().into();
-    let mut values = poly.clone();
-    values.bitreverse()?;
-    let monomial = values.ifft(&coset)?;
-    let result = monomial.grand_sum()?;
-
-    Ok(result)
-}
-
 pub fn compute_denom_at_base_point<'a>(
     roots: &Poly<'a, CosetEvaluations>,
     point: &DF,
 ) -> CudaResult<Poly<'a, CosetEvaluations>> {
     // TODO: This pattern is a temporary workaround, not optimal
-    let mut denom = Poly::<CosetEvaluations>::zero(roots.domain_size())?;
-    denom
-        .storage
-        .copy_from_device_slice(roots.storage.as_ref())?;
+    let mut denom = roots.clone();
     denom.sub_constant(point)?;
     denom.inverse()?;
     Ok(denom)
@@ -1741,11 +1727,7 @@ pub fn compute_denom_at_ext_point<'a>(
     point: &DExt,
 ) -> CudaResult<ComplexPoly<'a, CosetEvaluations>> {
     // TODO: This pattern is a temporary workaround, not optimal
-    let mut denom = ComplexPoly::<CosetEvaluations>::zero(roots.domain_size())?;
-    denom
-        .c0
-        .storage
-        .copy_from_device_slice(roots.storage.as_ref())?;
+    let mut denom = ComplexPoly::<CosetEvaluations>::from_real(roots)?;
     denom.sub_constant(point)?;
     denom.inverse()?;
     Ok(denom)
@@ -1767,11 +1749,7 @@ fn compute_deep_quotiening_over_coset(
     challenges: &DVec<EF>,
 ) -> CudaResult<ComplexPoly<'static, CosetEvaluations>> {
     let domain_size = trace_polys.variable_cols[0].domain_size();
-    // TODO:
-    // When we add an API to allocate empty vectors without pre-zeroing them,
-    // construct quotient that way. It will be fine because
-    // deep_quotient_except_public_inputs sets quotient disregarding initial values.
-    let mut quotient = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
+    let mut quotient = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
 
     let denom_at_z = compute_denom_at_ext_point(&roots, &z)?;
     let denom_at_z_omega = compute_denom_at_ext_point(&roots, &z_omega)?;
@@ -1833,7 +1811,7 @@ fn compute_deep_quotiening_over_coset(
     for (open_at, set) in public_input_opening_tuples.into_iter() {
         let open_at_df: DF = open_at.clone().into();
         let denom_at_point = compute_denom_at_base_point(&roots, &open_at_df)?;
-        // deep_quotient_add_opening accumulates into quotient_for_row, so it does need to be pre-zeroed
+        // deep_quotient_public_input accumulates into quotient_for_row, so it does need to be pre-zeroed
         let mut quotient_for_row = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
         for (column, expected_value) in set.into_iter() {
             deep_quotient_public_input(
@@ -1844,14 +1822,7 @@ fn compute_deep_quotiening_over_coset(
             )?;
             challenge_id += 1;
         }
-        // TODO: If mul_assign (and similar calls) can handle ComplexPolys interacting with Polys,
-        // we wouldn't need the denom_at_point_ext intermediate
-        let mut denom_at_point_ext = ComplexPoly::<CosetEvaluations>::zero(domain_size)?;
-        denom_at_point_ext
-            .c0
-            .storage
-            .copy_from_device_slice(&denom_at_point.storage.as_ref())?;
-        quotient_for_row.mul_assign(&denom_at_point_ext)?;
+        quotient_for_row.mul_assign_real(&denom_at_point)?;
         quotient.add_assign(&quotient_for_row)?;
     }
 

@@ -91,7 +91,7 @@ pub fn compute_lookup_argument_over_specialized_cols(
 
     // aggregate table values
     assert_eq!(table_cols.len(), powers_of_gamma.len());
-    let mut aggregated_table_values = ComplexPoly::<LagrangeBasis>::zero(domain_size)?;
+    let mut aggregated_table_values = ComplexPoly::<LagrangeBasis>::empty(domain_size)?;
     lookup_aggregated_table_values(
         &table_cols,
         &beta,
