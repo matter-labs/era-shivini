@@ -9,9 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub const FREE_MEMORY_SLACK: usize = 1 << 23; // 8 MB
-#[cfg(feature = "recompute")]
-pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1340 + 32;
-#[cfg(not(feature = "recompute"))]
 pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1695 + 64;
 pub const SMALL_ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 27 + 16;
 

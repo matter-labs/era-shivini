@@ -15,6 +15,7 @@ impl ProverContext {
             assert!(_EXEC_STREAM.is_none());
             assert!(_H2D_STREAM.is_none());
             assert!(_D2H_STREAM.is_none());
+            assert!(_SETUP_CACHE.is_none());
         }
         // size counts in field elements
         let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
@@ -52,6 +53,7 @@ impl ProverContext {
             assert!(_EXEC_STREAM.is_none());
             assert!(_H2D_STREAM.is_none());
             assert!(_D2H_STREAM.is_none());
+            assert!(_SETUP_CACHE.is_none());
         }
         // size counts in field elements
         let cuda_ctx = CudaContext::create(12, 12)?;
@@ -86,6 +88,7 @@ impl ProverContext {
             assert!(_EXEC_STREAM.is_none());
             assert!(_H2D_STREAM.is_none());
             assert!(_D2H_STREAM.is_none());
+            assert!(_SETUP_CACHE.is_none());
         }
         // size counts in field elements
         let block_size = 1 << ZKSYNC_DEFAULT_TRACE_LOG_LENGTH;
@@ -142,6 +145,8 @@ impl ProverContext {
 impl Drop for ProverContext {
     fn drop(&mut self) {
         unsafe {
+            drop(_SETUP_CACHE.take());
+
             let cuda_ctx = _CUDA_CONTEXT.take().expect("cuda ctx");
             cuda_ctx.destroy().expect("destroy cuda ctx");
 
@@ -263,5 +268,15 @@ pub(crate) fn _small_host_alloc() -> &'static SmallStaticHostAllocator {
         &_SMALL_HOST_ALLOCATOR
             .as_ref()
             .expect("small host allocator should be initialized")
+    }
+}
+
+pub(crate) static mut _SETUP_CACHE: Option<SetupCache> = None;
+
+pub(crate) fn _setup_cache() -> &'static SetupCache {
+    unsafe {
+        &_SETUP_CACHE
+            .as_ref()
+            .expect("setup cache should be initialized")
     }
 }

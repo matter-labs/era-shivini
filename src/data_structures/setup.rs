@@ -344,16 +344,20 @@ impl GenericSetupStorage<MonomialBasis> {
 }
 
 impl GenericSetupStorage<CosetEvaluations> {
+    pub fn allocate_nodes_storage(domain_size: usize) -> DVec<F> {
+        dvec!(2 * NUM_EL_PER_HASH * domain_size)
+    }
+
     pub fn build_subtree_for_coset(
         &self,
         cap_size: usize,
         coset_idx: usize,
+        mut nodes: DVec<F>,
     ) -> CudaResult<(SubTree, Vec<[F; 4]>)> {
         let domain_size = self.domain_size();
         let leaf_sources = self.as_single_slice();
-        let mut subtree = dvec!(2 * NUM_EL_PER_HASH * domain_size);
-        let subtree_root = compute_tree_cap(leaf_sources, &mut subtree, domain_size, cap_size, 1)?;
-        let subtree = SubTree::new(subtree, domain_size, cap_size, coset_idx);
+        let subtree_root = compute_tree_cap(leaf_sources, &mut nodes, domain_size, cap_size, 1)?;
+        let subtree = SubTree::new(nodes, domain_size, cap_size, coset_idx);
         Ok((subtree, subtree_root))
     }
 
@@ -365,36 +369,121 @@ impl GenericSetupStorage<CosetEvaluations> {
     }
 }
 
+pub struct SetupCacheConfig {
+    pub cache_indexes: bool,
+    pub cache_evaluations: bool,
+    pub cache_monomials: bool,
+    pub cached_cosets: usize,
+    pub cached_commitments: usize,
+}
+
 pub struct SetupCache {
-    monomials: GenericSetupStorage<MonomialBasis>,
-    cosets: Vec<Option<Rc<GenericSetupStorage<CosetEvaluations>>>>,
+    config: SetupCacheConfig,
+    tree_cap: Vec<<DefaultTreeHasher as TreeHasher<F>>::Output>,
     fri_lde_degree: usize,
     used_lde_degree: usize,
+    indexes: Option<Rc<DVec<u32>>>,
+    evaluations: Option<Rc<GenericSetupStorage<LagrangeBasis>>>,
+    monomials: Option<Rc<GenericSetupStorage<MonomialBasis>>>,
+    cosets: Vec<Rc<GenericSetupStorage<CosetEvaluations>>>,
+    commitments: Vec<Rc<(SubTree, Vec<[F; 4]>)>>,
 }
 
 impl SetupCache {
-    pub fn from_monomial(
-        monomial_setup: GenericSetupStorage<MonomialBasis>,
+    pub fn from_gpu_setup<A: GoodAllocator>(
+        setup: &GpuSetup<A>,
         fri_lde_degree: usize,
         used_lde_degree: usize,
-    ) -> CudaResult<Self> {
-        assert!(fri_lde_degree.is_power_of_two());
-        assert!(used_lde_degree.is_power_of_two());
-
-        let cosets = vec![None; fri_lde_degree];
-
-        let this = Self {
-            monomials: monomial_setup,
-            cosets,
-            fri_lde_degree,
-            used_lde_degree,
+    ) -> CudaResult<()> {
+        let tree_cap = setup.setup_tree.get_cap();
+        if let Some(cache) = unsafe { _SETUP_CACHE.as_ref() } {
+            if cache.tree_cap.eq(&tree_cap) {
+                println!("Reusing setup cache");
+                return Ok(());
+            }
+            unsafe {
+                drop(_SETUP_CACHE.take());
+            };
+        }
+        let config = SetupCacheConfig {
+            cache_indexes: true,
+            cache_evaluations: true,
+            cache_monomials: true,
+            cached_cosets: fri_lde_degree,
+            cached_commitments: fri_lde_degree,
+        };
+        let domain_size = setup.constant_columns[0].len();
+        assert!(domain_size.is_power_of_two());
+        let indexes = if config.cache_indexes {
+            Some(Rc::new(dvec![domain_size * setup.layout.num_polys()]))
+        } else {
+            None
+        };
+        let evaluations = if config.cache_evaluations {
+            Some(Rc::new(GenericSetupStorage::from_gpu_setup(setup)?))
+        } else {
+            None
+        };
+        let monomials = if config.cache_monomials {
+            Some(Rc::new(GenericSetupStorage::allocate(
+                setup.layout.clone(),
+                domain_size,
+            )?))
+        } else {
+            None
         };
 
-        Ok(this)
+        let mut cosets = Vec::with_capacity(config.cached_cosets);
+        for _ in (0..config.cached_cosets) {
+            cosets.push(Rc::new(GenericSetupStorage::allocate(
+                setup.layout.clone(),
+                domain_size,
+            )?));
+        }
+        let mut nodes = (0..config.cached_commitments)
+            .map(|_| GenericSetupStorage::allocate_nodes_storage(domain_size))
+            .collect::<Vec<_>>();
+        evaluations.unwrap().into_monomials()
+        let cache = Self {
+            config,
+            tree_cap,
+            fri_lde_degree,
+            used_lde_degree,
+            indexes,
+            evaluations,
+            monomials,
+            cosets,
+            commitments,
+        };
+        unsafe {
+            _SETUP_CACHE = Some(cache);
+        }
+        Ok(())
     }
 
+    // pub fn from_monomial(
+    //     monomial_setup: GenericSetupStorage<MonomialBasis>,
+    //     fri_lde_degree: usize,
+    //     used_lde_degree: usize,
+    // ) -> CudaResult<Self> {
+    //     assert!(fri_lde_degree.is_power_of_two());
+    //     assert!(used_lde_degree.is_power_of_two());
+    //
+    //     let cosets = vec![None; fri_lde_degree];
+    //
+    //     let this = Self {
+    //         monomials: monomial_setup,
+    //         cosets,
+    //         fri_lde_degree,
+    //         used_lde_degree,
+    //     };
+    //
+    //     Ok(this)
+    // }
+
     pub fn num_polys(&self) -> usize {
-        self.monomials.num_polys()
+        assert!(self.config.cache_evaluations);
+        self.evaluations.unwrap().num_polys()
     }
 
     pub fn commit<H: TreeHasher<F, Output = [F; 4]>>(
