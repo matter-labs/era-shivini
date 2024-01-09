@@ -186,10 +186,31 @@ impl<'a, P: PolyForm> Poly<'a, P> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ComplexPoly<'a, P: PolyForm> {
     pub c0: Poly<'a, P>,
     pub c1: Poly<'a, P>,
+}
+
+impl<'a, P: PolyForm> Clone for ComplexPoly<'a, P> {
+    fn clone(&self) -> Self {
+        let domain_size = self.len();
+        assert!(domain_size.is_power_of_two());
+        let mut new_chunks = dvec!(2 * domain_size)
+            .into_adjacent_chunks(domain_size)
+            .into_iter();
+        let mut new_c0 = new_chunks.next().unwrap();
+        let mut new_c1 = new_chunks.next().unwrap();
+        assert!(new_chunks.next().is_none());
+        // Uses expect, like PolyStorage::clone. We can't return a Result<Self> here unfortunately.
+        mem::d2d(self.c0.storage.as_ref(), &mut new_c0).expect("clone");
+        mem::d2d(self.c1.storage.as_ref(), &mut new_c1).expect("clone");
+
+        Self {
+            c0: Poly::from(new_c0),
+            c1: Poly::from(new_c1),
+        }
+    }
 }
 
 impl<'a, P: PolyForm> AsSingleSlice for ComplexPoly<'a, P> {
