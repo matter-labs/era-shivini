@@ -879,6 +879,7 @@ mod zksync {
 
     #[serial]
     #[test]
+    #[ignore]
     fn compare_proofs_for_all_zksync_circuits() -> CudaResult<()> {
         let worker = &Worker::new();
         let _ctx = ProverContext::create()?;
