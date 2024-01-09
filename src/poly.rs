@@ -194,10 +194,8 @@ pub struct ComplexPoly<'a, P: PolyForm> {
 
 impl<'a, P: PolyForm> Clone for ComplexPoly<'a, P> {
     fn clone(&self) -> Self {
-        let domain_size = self.len();
-        assert!(domain_size.is_power_of_two());
         // Uses expect, like PolyStorage::clone. We can't return a Result<Self> here unfortunately.
-        let mut new = ComplexPoly::<P>::empty(domain_size).expect("empty");
+        let mut new = ComplexPoly::<P>::empty(self.domain_size()).expect("empty");
         mem::d2d(self.as_single_slice(), new.as_single_slice_mut()).expect("clone");
 
         new
@@ -206,7 +204,9 @@ impl<'a, P: PolyForm> Clone for ComplexPoly<'a, P> {
 
 impl<'a, P: PolyForm> AsSingleSlice for ComplexPoly<'a, P> {
     fn domain_size(&self) -> usize {
-        self.c0.domain_size()
+        let domain_size = self.c0.domain_size();
+        assert!(domain_size.is_power_of_two());
+        domain_size
     }
 
     fn num_polys(&self) -> usize {
@@ -251,7 +251,7 @@ impl<'a, P: PolyForm> From<&'a [F]> for Poly<'a, P> {
 impl<'a, P: PolyForm> ComplexPoly<'a, P> {
     fn assert_c0_c1_adjacent(c0: &Poly<'a, P>, c1: &Poly<'a, P>) {
         let c0_ptr = c0.storage.as_ref().as_ptr();
-        let c0_len = c0.storage.len();
+        let c0_len = c0.domain_size();
         assert_eq!(c0_len, c1.storage.len());
         unsafe {
             assert_eq!(c0_ptr.add(c0_len), c1.storage.as_ref().as_ptr());
