@@ -196,20 +196,11 @@ impl<'a, P: PolyForm> Clone for ComplexPoly<'a, P> {
     fn clone(&self) -> Self {
         let domain_size = self.len();
         assert!(domain_size.is_power_of_two());
-        let mut new_chunks = dvec!(2 * domain_size)
-            .into_adjacent_chunks(domain_size)
-            .into_iter();
-        let mut new_c0 = new_chunks.next().unwrap();
-        let mut new_c1 = new_chunks.next().unwrap();
-        assert!(new_chunks.next().is_none());
         // Uses expect, like PolyStorage::clone. We can't return a Result<Self> here unfortunately.
-        mem::d2d(self.c0.storage.as_ref(), &mut new_c0).expect("clone");
-        mem::d2d(self.c1.storage.as_ref(), &mut new_c1).expect("clone");
+        let mut new = ComplexPoly::<P>::empty(domain_size).expect("empty");
+        mem::d2d(self.as_single_slice(), new.as_single_slice_mut()).expect("clone");
 
-        Self {
-            c0: Poly::from(new_c0),
-            c1: Poly::from(new_c1),
-        }
+        new
     }
 }
 
@@ -223,7 +214,7 @@ impl<'a, P: PolyForm> AsSingleSlice for ComplexPoly<'a, P> {
     }
 
     fn as_single_slice(&self) -> &[F] {
-        // assert_adjacent(&[self.c0, self.c1]); // TODO
+        ComplexPoly::<P>::assert_c0_c1_adjacent(&self.c0, &self.c1);
         unsafe {
             let len = 2 * self.c0.domain_size();
             std::slice::from_raw_parts(self.c0.storage.as_ref().as_ptr(), len)
@@ -231,7 +222,7 @@ impl<'a, P: PolyForm> AsSingleSlice for ComplexPoly<'a, P> {
     }
 
     fn as_single_slice_mut(&mut self) -> &mut [F] {
-        // assert_adjacent(&[self.c0, self.c1]); // TODO
+        ComplexPoly::<P>::assert_c0_c1_adjacent(&self.c0, &self.c1);
         unsafe {
             let len = 2 * self.c0.domain_size();
             std::slice::from_raw_parts_mut(self.c0.storage.as_mut().as_mut_ptr(), len)
@@ -258,13 +249,17 @@ impl<'a, P: PolyForm> From<&'a [F]> for Poly<'a, P> {
 }
 
 impl<'a, P: PolyForm> ComplexPoly<'a, P> {
-    pub fn new(c0: Poly<'a, P>, c1: Poly<'a, P>) -> Self {
+    fn assert_c0_c1_adjacent(c0: &Poly<'a, P>, c1: &Poly<'a, P>) {
         let c0_ptr = c0.storage.as_ref().as_ptr();
         let c0_len = c0.storage.len();
         assert_eq!(c0_len, c1.storage.len());
         unsafe {
             assert_eq!(c0_ptr.add(c0_len), c1.storage.as_ref().as_ptr());
         }
+    }
+
+    pub fn new(c0: Poly<'a, P>, c1: Poly<'a, P>) -> Self {
+        ComplexPoly::<P>::assert_c0_c1_adjacent(&c0, &c1);
         Self { c0, c1 }
     }
 
