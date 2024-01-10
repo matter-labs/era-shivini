@@ -1113,7 +1113,6 @@ mod zksync {
     fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot() {
         let circuit = get_circuit_from_env();
         let _ctx = ProverContext::create().expect("gpu prover context");
-        // let _ctx = ProverContext::create_limited().expect("gpu prover context");
 
         println!(
             "{} {}",
