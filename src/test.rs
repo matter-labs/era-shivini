@@ -1032,12 +1032,13 @@ mod zksync {
         }
     }
 
-    #[serial]
-    #[test]
-    #[ignore]
-    fn compare_proofs_for_single_zksync_circuit_in_single_shot() {
+    fn compare_proofs_for_single_zksync_circuit_in_single_shot(limit_mem: bool) {
         let circuit = get_circuit_from_env();
-        let _ctx = ProverContext::create_limited().expect("gpu prover context");
+        let _ctx = if limit_mem {
+            ProverContext::create_limited().expect("gpu prover context")
+        } else {
+            ProverContext::create().expect("gpu prover context")
+        };
 
         println!(
             "{} {}",
@@ -1110,9 +1111,24 @@ mod zksync {
     #[serial]
     #[test]
     #[ignore]
-    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot() {
+    fn compare_proofs_for_single_zksync_circuit_in_single_shot_all_mem() {
+        compare_proofs_for_single_zksync_circuit_in_single_shot(false);
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
+    fn compare_proofs_for_single_zksync_circuit_in_single_shot_limit_mem() {
+        compare_proofs_for_single_zksync_circuit_in_single_shot(true);
+    }
+
+    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(limit_mem: bool) {
         let circuit = get_circuit_from_env();
-        let _ctx = ProverContext::create().expect("gpu prover context");
+        let _ctx = if limit_mem {
+            ProverContext::create_limited().expect("gpu prover context")
+        } else {
+            ProverContext::create().expect("gpu prover context")
+        };
 
         println!(
             "{} {}",
@@ -1187,6 +1203,20 @@ mod zksync {
         let actual_proof = gpu_proof.into();
         circuit.verify_proof(&vk, &actual_proof);
         compare_proofs(&reference_proof, &actual_proof);
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
+    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot_all_mem() {
+        compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(false);
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
+    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot_limit_mem() {
+        compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(true);
     }
 
     #[serial]
