@@ -45,71 +45,71 @@ pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
 type P = F;
 use serial_test::serial;
 
-#[serial]
-#[test]
-#[ignore]
-fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
-    let (setup_cs, finalization_hint) =
-        init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
-    let worker = Worker::new();
-    let prover_config = init_proof_cfg();
-    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
-        &worker,
-        prover_config.fri_lde_factor,
-        prover_config.merkle_tree_cap_size,
-    );
-    let domain_size = setup_cs.max_trace_len;
-    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-    let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
-        setup_base.clone(),
-        clone_reference_tree(&setup_tree),
-        vars_hint.clone(),
-        wits_hint.clone(),
-        &worker,
-    )
-    .unwrap();
-
-    assert!(domain_size.is_power_of_two());
-    let actual_proof = {
-        let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
-            ProvingCSConfig,
-            true,
-        >(finalization_hint.as_ref());
-        let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-            &mut proving_cs,
-            prover_config,
-            &gpu_setup,
-            &vk,
-            (),
-            &worker,
-        )
-        .expect("gpu proof");
-
-        proof
-    };
-
-    let expected_proof = {
-        let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
-            finalization_hint.as_ref(),
-        );
-        let worker = Worker::new();
-        let prover_config = init_proof_cfg();
-
-        proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                prover_config,
-                &setup_base,
-                &setup,
-                &setup_tree,
-                &vk,
-                &vars_hint,
-                &wits_hint,
-                (),
-                &worker,
-            )
-    };
-    let actual_proof = actual_proof.into();
-    compare_proofs(&expected_proof, &actual_proof);
-}
+// #[serial]
+// #[test]
+// #[ignore]
+// fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
+//     let (setup_cs, finalization_hint) =
+//         init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
+//     let worker = Worker::new();
+//     let prover_config = init_proof_cfg();
+//     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+//         &worker,
+//         prover_config.fri_lde_factor,
+//         prover_config.merkle_tree_cap_size,
+//     );
+//     let domain_size = setup_cs.max_trace_len;
+//     let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+//     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+//         setup_base.clone(),
+//         clone_reference_tree(&setup_tree),
+//         vars_hint.clone(),
+//         wits_hint.clone(),
+//         &worker,
+//     )
+//     .unwrap();
+//
+//     assert!(domain_size.is_power_of_two());
+//     let actual_proof = {
+//         let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
+//             ProvingCSConfig,
+//             true,
+//         >(finalization_hint.as_ref());
+//         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
+//             &mut proving_cs,
+//             prover_config,
+//             &gpu_setup,
+//             &vk,
+//             (),
+//             &worker,
+//         )
+//         .expect("gpu proof");
+//
+//         proof
+//     };
+//
+//     let expected_proof = {
+//         let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
+//             finalization_hint.as_ref(),
+//         );
+//         let worker = Worker::new();
+//         let prover_config = init_proof_cfg();
+//
+//         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
+//                 prover_config,
+//                 &setup_base,
+//                 &setup,
+//                 &setup_tree,
+//                 &vk,
+//                 &vars_hint,
+//                 &wits_hint,
+//                 (),
+//                 &worker,
+//             )
+//     };
+//     let actual_proof = actual_proof.into();
+//     compare_proofs(&expected_proof, &actual_proof);
+// }
 
 fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: bool>(
     finalization_hint: Option<&FinalizationHintsForProver>,
@@ -305,67 +305,67 @@ fn clone_reference_tree(
     }
 }
 
-#[serial]
-#[test]
-#[ignore]
-fn test_proof_comparison_for_sha256() {
-    let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
-
-    let worker = Worker::new();
-    let prover_config = init_proof_cfg();
-    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
-        &worker,
-        prover_config.fri_lde_factor,
-        prover_config.merkle_tree_cap_size,
-    );
-    let domain_size = setup_cs.max_trace_len;
-    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-    // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
-    let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
-        setup_base.clone(),
-        clone_reference_tree(&setup_tree),
-        vars_hint.clone(),
-        wits_hint.clone(),
-        &worker,
-    )
-    .unwrap();
-
-    assert!(domain_size.is_power_of_two());
-    let actual_proof = {
-        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
-        let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-            &mut proving_cs,
-            prover_config,
-            &gpu_setup,
-            &vk,
-            (),
-            &worker,
-        )
-        .expect("gpu proof");
-
-        proof
-    };
-
-    let expected_proof = {
-        let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
-        let worker = Worker::new();
-        let prover_config = init_proof_cfg();
-
-        proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                prover_config,
-                &setup_base,
-                &setup,
-                &setup_tree,
-                &vk,
-                &vars_hint,
-                &wits_hint,
-                (),
-                &worker,
-            )
-    };
-    let actual_proof = actual_proof.into();
-    compare_proofs(&expected_proof, &actual_proof);
-}
+// #[serial]
+// #[test]
+// #[ignore]
+// fn test_proof_comparison_for_sha256() {
+//     let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+//
+//     let worker = Worker::new();
+//     let prover_config = init_proof_cfg();
+//     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+//         &worker,
+//         prover_config.fri_lde_factor,
+//         prover_config.merkle_tree_cap_size,
+//     );
+//     let domain_size = setup_cs.max_trace_len;
+//     let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+//     // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
+//     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+//         setup_base.clone(),
+//         clone_reference_tree(&setup_tree),
+//         vars_hint.clone(),
+//         wits_hint.clone(),
+//         &worker,
+//     )
+//     .unwrap();
+//
+//     assert!(domain_size.is_power_of_two());
+//     let actual_proof = {
+//         let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+//         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
+//             &mut proving_cs,
+//             prover_config,
+//             &gpu_setup,
+//             &vk,
+//             (),
+//             &worker,
+//         )
+//         .expect("gpu proof");
+//
+//         proof
+//     };
+//
+//     let expected_proof = {
+//         let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+//         let worker = Worker::new();
+//         let prover_config = init_proof_cfg();
+//
+//         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
+//                 prover_config,
+//                 &setup_base,
+//                 &setup,
+//                 &setup_tree,
+//                 &vk,
+//                 &vars_hint,
+//                 &wits_hint,
+//                 (),
+//                 &worker,
+//             )
+//     };
+//     let actual_proof = actual_proof.into();
+//     compare_proofs(&expected_proof, &actual_proof);
+// }
 
 #[allow(dead_code)]
 pub fn init_reusable_cs_for_sha256(
@@ -877,11 +877,13 @@ mod zksync {
         );
     }
 
-    #[serial]
-    #[test]
-    fn compare_proofs_for_all_zksync_circuits() -> CudaResult<()> {
+    fn compare_proofs_for_all_zksync_circuits(limit_mem: bool) -> CudaResult<()> {
         let worker = &Worker::new();
-        let _ctx = ProverContext::create()?;
+        let _ctx = if limit_mem {
+            ProverContext::create_limited().expect("gpu prover context")
+        } else {
+            ProverContext::create().expect("gpu prover context")
+        };
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("./test_data/{}", main_dir);
@@ -935,9 +937,19 @@ mod zksync {
                 let gpu_proof = {
                     let mut proving_cs =
                         synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-                    gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-                        &mut proving_cs,
-                        proof_config,
+                    let witness = proving_cs.materialize_witness_vec();
+                    let reusable_cs =
+                        init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+                    gpu_prove_from_external_witness_data::<
+                        _,
+                        DefaultTranscript,
+                        DefaultTreeHasher,
+                        NoPow,
+                        Global,
+                    >(
+                        &reusable_cs,
+                        &witness,
+                        proof_config.clone(),
                         &gpu_setup,
                         &vk,
                         (),
@@ -958,6 +970,19 @@ mod zksync {
         }
 
         Ok(())
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
+    fn compare_proofs_for_all_zksync_circuits_limit_mem() -> CudaResult<()> {
+        compare_proofs_for_all_zksync_circuits(true)
+    }
+
+    #[serial]
+    #[test]
+    fn compare_proofs_for_all_zksync_circuits_all_mem() -> CudaResult<()> {
+        compare_proofs_for_all_zksync_circuits(false)
     }
 
     #[serial]
@@ -1032,97 +1057,99 @@ mod zksync {
         }
     }
 
-    fn compare_proofs_for_single_zksync_circuit_in_single_shot(limit_mem: bool) {
-        let circuit = get_circuit_from_env();
-        let _ctx = if limit_mem {
-            ProverContext::create_limited().expect("gpu prover context")
-        } else {
-            ProverContext::create().expect("gpu prover context")
-        };
+    // fn compare_proofs_for_single_zksync_circuit_in_single_shot(limit_mem: bool) {
+    //     let circuit = get_circuit_from_env();
+    //     let _ctx = if limit_mem {
+    //         ProverContext::create_limited().expect("gpu prover context")
+    //     } else {
+    //         ProverContext::create().expect("gpu prover context")
+    //     };
 
-        println!(
-            "{} {}",
-            circuit.numeric_circuit_type(),
-            circuit.short_description()
-        );
-        let worker = &Worker::new();
+    //     println!(
+    //         "{} {}",
+    //         circuit.numeric_circuit_type(),
+    //         circuit.short_description()
+    //     );
+    //     let worker = &Worker::new();
 
-        let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit.clone());
-        let proof_cfg = circuit.proof_config();
-        let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
-            worker,
-            proof_cfg.fri_lde_factor,
-            proof_cfg.merkle_tree_cap_size,
-        );
+    //     let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit.clone());
+    //     let proof_cfg = circuit.proof_config();
+    //     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+    //         worker,
+    //         proof_cfg.fri_lde_factor,
+    //         proof_cfg.merkle_tree_cap_size,
+    //     );
 
-        println!(
-            "trace length size 2^{}",
-            setup_base.copy_permutation_polys[0]
-                .domain_size()
-                .trailing_zeros()
-        );
+    //     println!(
+    //         "trace length size 2^{}",
+    //         setup_base.copy_permutation_polys[0]
+    //             .domain_size()
+    //             .trailing_zeros()
+    //     );
 
-        let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+    //     let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
 
-        println!("gpu proving");
-        let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
-            setup_base.clone(),
-            clone_reference_tree(&setup_tree),
-            vars_hint.clone(),
-            wits_hint.clone(),
-            &worker,
-        )
-        .expect("gpu setup");
-        let gpu_proof = {
-            gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-                &mut proving_cs,
-                proof_cfg.clone(),
-                &gpu_setup,
-                &vk,
-                (),
-                worker,
-            )
-            .expect("gpu proof")
-        };
-        println!("cpu proving");
-        let reference_proof = {
-            // we can't clone assembly lets synth it again
-            let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-            proving_cs
-                .prove_from_precomputations::<EXT, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                    proof_cfg.clone(),
-                    &setup_base,
-                    &setup,
-                    &setup_tree,
-                    &vk,
-                    &vars_hint,
-                    &wits_hint,
-                    (),
-                    worker,
-                )
-        };
-        let start = std::time::Instant::now();
-        let actual_proof = gpu_proof.into();
-        println!("proof transformation takes {:?}", start.elapsed());
-        // circuit.verify_proof(&vk, &actual_proof); // TODO
-        compare_proofs(&reference_proof, &actual_proof);
-    }
+    //     println!("gpu proving");
+    //     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+    //         setup_base.clone(),
+    //         clone_reference_tree(&setup_tree),
+    //         vars_hint.clone(),
+    //         wits_hint.clone(),
+    //         &worker,
+    //     )
+    //     .expect("gpu setup");
+    //     let gpu_proof = {
+    //         gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
+    //             &mut proving_cs,
+    //             proof_cfg.clone(),
+    //             &gpu_setup,
+    //             &vk,
+    //             (),
+    //             worker,
+    //         )
+    //         .expect("gpu proof")
+    //     };
+    //     println!("cpu proving");
+    //     let reference_proof = {
+    //         // we can't clone assembly lets synth it again
+    //         let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+    //         proving_cs
+    //             .prove_from_precomputations::<EXT, DefaultTranscript, DefaultTreeHasher, NoPow>(
+    //                 proof_cfg.clone(),
+    //                 &setup_base,
+    //                 &setup,
+    //                 &setup_tree,
+    //                 &vk,
+    //                 &vars_hint,
+    //                 &wits_hint,
+    //                 (),
+    //                 worker,
+    //             )
+    //     };
+    //     let start = std::time::Instant::now();
+    //     let actual_proof = gpu_proof.into();
+    //     println!("proof transformation takes {:?}", start.elapsed());
+    //     // circuit.verify_proof(&vk, &actual_proof); // TODO
+    //     compare_proofs(&reference_proof, &actual_proof);
+    // }
 
-    #[serial]
-    #[test]
-    #[ignore]
-    fn compare_proofs_for_single_zksync_circuit_in_single_shot_all_mem() {
-        compare_proofs_for_single_zksync_circuit_in_single_shot(false);
-    }
+    // #[serial]
+    // #[test]
+    // #[ignore]
+    // fn compare_proofs_for_single_zksync_circuit_in_single_shot_all_mem() {
+    //     compare_proofs_for_single_zksync_circuit_in_single_shot(false);
+    // }
 
-    #[serial]
-    #[test]
-    #[ignore]
-    fn compare_proofs_for_single_zksync_circuit_in_single_shot_limit_mem() {
-        compare_proofs_for_single_zksync_circuit_in_single_shot(true);
-    }
+    // #[serial]
+    // #[test]
+    // #[ignore]
+    // fn compare_proofs_for_single_zksync_circuit_in_single_shot_limit_mem() {
+    //     compare_proofs_for_single_zksync_circuit_in_single_shot(true);
+    // }
 
-    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(limit_mem: bool) {
+    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(
+        limit_mem: bool,
+    ) {
         let circuit = get_circuit_from_env();
         let _ctx = if limit_mem {
             ProverContext::create_limited().expect("gpu prover context")
@@ -1200,7 +1227,9 @@ mod zksync {
                     worker,
                 )
         };
+        let start = std::time::Instant::now();
         let actual_proof = gpu_proof.into();
+        println!("proof transformation takes {:?}", start.elapsed());
         circuit.verify_proof(&vk, &actual_proof);
         compare_proofs(&reference_proof, &actual_proof);
     }
