@@ -50,7 +50,7 @@ use serial_test::serial;
 #[ignore]
 fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
     let (setup_cs, finalization_hint) =
-        init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
+        init_or_synth_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
@@ -71,14 +71,15 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
-        let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
+        let (mut proving_cs, _) = init_or_synth_cs_with_poseidon2_and_private_witnesses::<
             ProvingCSConfig,
             true,
         >(finalization_hint.as_ref());
         let witness = proving_cs.materialize_witness_vec();
-        let (reusable_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, false>(
-            finalization_hint.as_ref(),
-        );
+        let (reusable_cs, _) = init_or_synth_cs_with_poseidon2_and_private_witnesses::<
+            ProvingCSConfig,
+            false,
+        >(finalization_hint.as_ref());
         let proof = gpu_prove_from_external_witness_data::<
             _,
             DefaultTranscript,
@@ -100,9 +101,10 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
     };
 
     let expected_proof = {
-        let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
-            finalization_hint.as_ref(),
-        );
+        let (proving_cs, _) = init_or_synth_cs_with_poseidon2_and_private_witnesses::<
+            ProvingCSConfig,
+            true,
+        >(finalization_hint.as_ref());
         let worker = Worker::new();
         let prover_config = init_proof_cfg();
 
@@ -122,7 +124,7 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
     compare_proofs(&expected_proof, &actual_proof);
 }
 
-fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: bool>(
+fn init_or_synth_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: bool>(
     finalization_hint: Option<&FinalizationHintsForProver>,
 ) -> (
     CSReferenceAssembly<F, F, CFG>,
@@ -208,7 +210,7 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
 #[test]
 #[ignore]
 fn test_permutation_polys() {
-    let (setup_cs, _finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (setup_cs, _finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -270,7 +272,7 @@ fn test_permutation_polys() {
 #[test]
 #[ignore]
 fn test_setup_comparison() {
-    let (setup_cs, _) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (setup_cs, _) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -323,7 +325,7 @@ fn clone_reference_tree(
 #[test]
 #[ignore]
 fn test_proof_comparison_for_sha256() {
-    let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -346,9 +348,11 @@ fn test_proof_comparison_for_sha256() {
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
-        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let (mut proving_cs, _) =
+            init_or_synth_cs_for_sha256::<ProvingCSConfig, true>(finalization_hint.as_ref());
         let witness = proving_cs.materialize_witness_vec();
-        let reusable_cs = init_reusable_cs_for_sha256(finalization_hint.as_ref().unwrap());
+        let (reusable_cs, _) =
+            init_or_synth_cs_for_sha256::<ProvingCSConfig, false>(finalization_hint.as_ref());
         let proof = gpu_prove_from_external_witness_data::<
             _,
             DefaultTranscript,
@@ -370,7 +374,8 @@ fn test_proof_comparison_for_sha256() {
     };
 
     let expected_proof = {
-        let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let (proving_cs, _) =
+            init_or_synth_cs_for_sha256::<ProvingCSConfig, true>(finalization_hint.as_ref());
         let worker = Worker::new();
         let prover_config = init_proof_cfg();
 
@@ -390,9 +395,12 @@ fn test_proof_comparison_for_sha256() {
     compare_proofs(&expected_proof, &actual_proof);
 }
 
-pub fn init_reusable_cs_for_sha256(
-    finalization_hint: &FinalizationHintsForProver,
-) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
+fn init_or_synth_cs_for_sha256<CFG: CSConfig, const DO_SYNTH: bool>(
+    finalization_hint: Option<&FinalizationHintsForProver>,
+) -> (
+    CSReferenceAssembly<F, F, CFG>,
+    Option<FinalizationHintsForProver>,
+) {
     use blake2::Digest;
     // let len = 10 * 64 + 64 - 9;
     // let len = 2 * (1 << 10);
@@ -408,7 +416,7 @@ pub fn init_reusable_cs_for_sha256(
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(&input);
-    let _reference_output = hasher.finalize();
+    let reference_output = hasher.finalize();
 
     let geometry = CSGeometry {
         num_columns_under_copy_permutation: 32,
@@ -419,7 +427,7 @@ pub fn init_reusable_cs_for_sha256(
 
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, ProvingCSConfig>::new(geometry, 1 << 25, 1 << 19);
+        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 19);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -443,6 +451,11 @@ pub fn init_reusable_cs_for_sha256(
         builder,
         GatePlacementStrategy::UseGeneralPurposeColumns,
     );
+    // not present in boojum/src/gadgets/sha256
+    // let builder = PublicInputGate::configure_builder(
+    //     builder,
+    //     GatePlacementStrategy::UseGeneralPurposeColumns,
+    // );
     let builder =
         NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
 
@@ -463,9 +476,50 @@ pub fn init_reusable_cs_for_sha256(
 
     let table = create_4bit_chunk_split_table::<F, 2>();
     owned_cs.add_lookup_table::<Split4BitChunkTable<2>, 4>(table);
-    let owned_cs = owned_cs.into_assembly_for_repeated_proving(&finalization_hint);
 
-    owned_cs
+    if DO_SYNTH {
+        let mut circuit_input = vec![];
+
+        let cs = &mut owned_cs;
+
+        for el in input.iter() {
+            let el = UInt8::allocate_checked(cs, *el);
+            circuit_input.push(el);
+        }
+
+        let output = sha256(cs, &circuit_input);
+        dbg!(output.len());
+
+        // not present in boojum/src/gadgets/sha256
+        // let mut next_available_row = cs.next_available_row();
+        // for (column, var) in output.iter().enumerate() {
+        //     let gate = PublicInputGate::new(var.get_variable());
+        //     cs.place_gate(&gate, next_available_row);
+        //     cs.place_variable(var.get_variable(), next_available_row, column);
+        //     cs.set_public(column, next_available_row);
+        // }
+        let output = hex::encode(&(output.witness_hook(&*cs))().unwrap());
+        let reference_output = hex::encode(reference_output.as_slice());
+        assert_eq!(output, reference_output);
+    }
+
+    // imitates control flow of synthesis_utils::init_or_synthesize_assembly
+    if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
+        let (_, finalization_hint) = owned_cs.pad_and_shrink();
+        let mut owned_cs = owned_cs.into_assembly();
+        owned_cs.wait_for_witness();
+        (owned_cs, Some(finalization_hint))
+    } else {
+        let hint = finalization_hint.unwrap();
+        if DO_SYNTH {
+            owned_cs.pad_and_shrink_using_hint(hint);
+            let mut owned_cs = owned_cs.into_assembly();
+            owned_cs.wait_for_witness();
+            (owned_cs, None)
+        } else {
+            (owned_cs.into_assembly_for_repeated_proving(hint), None)
+        }
+    }
 }
 
 fn compare_proofs(
@@ -611,7 +665,7 @@ fn compare_proofs(
 #[test]
 #[ignore]
 fn test_reference_proof_for_sha256() {
-    let (mut cs, _) = init_cs_for_sha256::<DevCSConfig>(None);
+    let (mut cs, _) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -641,124 +695,6 @@ pub fn init_proof_cfg() -> ProofConfig {
     prover_config.merkle_tree_cap_size = 32;
 
     prover_config
-}
-
-pub fn init_cs_for_sha256<CFG: CSConfig>(
-    finalization_hint: Option<&FinalizationHintsForProver>,
-) -> (
-    CSReferenceAssembly<F, F, CFG>,
-    Option<FinalizationHintsForProver>,
-) {
-    use blake2::Digest;
-    // let len = 10 * 64 + 64 - 9;
-    // let len = 2 * (1 << 10);
-    let len = 2 * (1 << 2);
-    use rand::{Rng, SeedableRng};
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42 as u64);
-
-    let mut input = vec![];
-    for _ in 0..len {
-        let byte: u8 = rng.gen();
-        input.push(byte);
-    }
-
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(&input);
-    let reference_output = hasher.finalize();
-
-    let geometry = CSGeometry {
-        num_columns_under_copy_permutation: 32,
-        num_witness_columns: 0,
-        num_constant_columns: 4,
-        max_allowed_constraint_degree: 4,
-    };
-
-    use boojum::cs::cs_builder_reference::*;
-    let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 19);
-    use boojum::cs::cs_builder::new_builder;
-    let builder = new_builder::<_, F>(builder_impl);
-
-    let builder = builder.allow_lookup(
-        boojum::cs::LookupParameters::UseSpecializedColumnsWithTableIdAsConstant {
-            width: 4,
-            num_repetitions: 8,
-            share_table_id: true,
-        },
-    );
-
-    let builder = ConstantsAllocatorGate::configure_builder(
-        builder,
-        GatePlacementStrategy::UseGeneralPurposeColumns,
-    );
-    let builder = FmaGateInBaseFieldWithoutConstant::configure_builder(
-        builder,
-        GatePlacementStrategy::UseGeneralPurposeColumns,
-    );
-    let builder = ReductionGate::<F, 4>::configure_builder(
-        builder,
-        GatePlacementStrategy::UseGeneralPurposeColumns,
-    );
-    let builder = PublicInputGate::configure_builder(
-        builder,
-        GatePlacementStrategy::UseGeneralPurposeColumns,
-    );
-
-    let builder =
-        NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
-
-    let mut owned_cs = builder.build(());
-    // add tables
-    let table = create_tri_xor_table();
-    owned_cs.add_lookup_table::<TriXor4Table, 4>(table);
-
-    let table = create_ch4_table();
-    owned_cs.add_lookup_table::<Ch4Table, 4>(table);
-
-    let table = create_maj4_table();
-    owned_cs.add_lookup_table::<Maj4Table, 4>(table);
-
-    let table = create_4bit_chunk_split_table::<F, 1>();
-    owned_cs.add_lookup_table::<Split4BitChunkTable<1>, 4>(table);
-
-    let table = create_4bit_chunk_split_table::<F, 2>();
-    owned_cs.add_lookup_table::<Split4BitChunkTable<2>, 4>(table);
-
-    let mut circuit_input = vec![];
-
-    let cs = &mut owned_cs;
-
-    for el in input.iter() {
-        let el = UInt8::allocate_checked(cs, *el);
-        circuit_input.push(el);
-    }
-
-    let output = sha256(cs, &circuit_input);
-    dbg!(output.len());
-
-    // let mut next_available_row = cs.next_available_row();
-    // for (column, var) in output.iter().enumerate() {
-    //     let gate = PublicInputGate::new(var.get_variable());
-    //     cs.place_gate(&gate, next_available_row);
-    //     cs.place_variable(var.get_variable(), next_available_row, column);
-    //     cs.set_public(column, next_available_row);
-    // }
-    let output = hex::encode(&(output.witness_hook(&*cs))().unwrap());
-    let reference_output = hex::encode(reference_output.as_slice());
-    assert_eq!(output, reference_output);
-
-    let finalization_hint = if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
-        let (_, finalization_hint) = cs.pad_and_shrink();
-        Some(finalization_hint)
-    } else {
-        let finalization_hint = finalization_hint.unwrap();
-        cs.pad_and_shrink_using_hint(finalization_hint);
-        None
-    };
-    let mut owned_cs = owned_cs.into_assembly();
-    owned_cs.wait_for_witness();
-
-    (owned_cs, finalization_hint)
 }
 
 #[cfg(test)]
@@ -849,6 +785,7 @@ mod zksync {
 
         proofs
     }
+
     #[serial]
     #[test]
     #[ignore]
@@ -1272,9 +1209,9 @@ mod zksync {
     #[serial]
     #[test]
     #[ignore]
-    #[should_panic]
+    #[should_panic(expected = "placeholder found in a public input location")]
     fn test_public_input_placeholder_fail() {
-        let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
+        let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
         let worker = Worker::new();
         let proof_config = init_proof_cfg();
         let (setup_base, _, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
@@ -1284,8 +1221,11 @@ mod zksync {
         );
         let domain_size = setup_cs.max_trace_len;
         let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let (mut proving_cs, _) =
+            init_or_synth_cs_for_sha256::<ProvingCSConfig, true>(finalization_hint.as_ref());
         let mut witness = proving_cs.materialize_witness_vec();
+        let (reusable_cs, _) =
+            init_or_synth_cs_for_sha256::<ProvingCSConfig, false>(finalization_hint.as_ref());
         let mut gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
             setup_base.clone(),
             clone_reference_tree(&setup_tree),
@@ -1303,7 +1243,7 @@ mod zksync {
             NoPow,
             Global,
         >(
-            &proving_cs,
+            &reusable_cs,
             &witness,
             proof_config.clone(),
             &gpu_setup,
