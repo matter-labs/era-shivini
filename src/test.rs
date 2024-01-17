@@ -76,10 +76,9 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
             true,
         >(finalization_hint.as_ref());
         let witness = proving_cs.materialize_witness_vec();
-        let (reusable_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
-            ProvingCSConfig,
-            false,
-        >(finalization_hint.as_ref());
+        let (reusable_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, false>(
+            finalization_hint.as_ref(),
+        );
         let proof = gpu_prove_from_external_witness_data::<
             _,
             DefaultTranscript,
