@@ -51,7 +51,7 @@ pub fn gpu_prove_from_external_witness_data<
     assert_eq!(
         cs.next_available_place_idx(),
         0,
-        "CS should be empty and hold no data"
+        "CS should be a reusable cs (empty and holding no data)"
     );
     unsafe {
         assert!(

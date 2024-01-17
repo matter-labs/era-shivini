@@ -45,71 +45,83 @@ pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
 type P = F;
 use serial_test::serial;
 
-// #[serial]
-// #[test]
-// #[ignore]
-// fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
-//     let (setup_cs, finalization_hint) =
-//         init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
-//     let worker = Worker::new();
-//     let prover_config = init_proof_cfg();
-//     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
-//         &worker,
-//         prover_config.fri_lde_factor,
-//         prover_config.merkle_tree_cap_size,
-//     );
-//     let domain_size = setup_cs.max_trace_len;
-//     let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-//     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
-//         setup_base.clone(),
-//         clone_reference_tree(&setup_tree),
-//         vars_hint.clone(),
-//         wits_hint.clone(),
-//         &worker,
-//     )
-//     .unwrap();
-//
-//     assert!(domain_size.is_power_of_two());
-//     let actual_proof = {
-//         let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
-//             ProvingCSConfig,
-//             true,
-//         >(finalization_hint.as_ref());
-//         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-//             &mut proving_cs,
-//             prover_config,
-//             &gpu_setup,
-//             &vk,
-//             (),
-//             &worker,
-//         )
-//         .expect("gpu proof");
-//
-//         proof
-//     };
-//
-//     let expected_proof = {
-//         let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
-//             finalization_hint.as_ref(),
-//         );
-//         let worker = Worker::new();
-//         let prover_config = init_proof_cfg();
-//
-//         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-//                 prover_config,
-//                 &setup_base,
-//                 &setup,
-//                 &setup_tree,
-//                 &vk,
-//                 &vars_hint,
-//                 &wits_hint,
-//                 (),
-//                 &worker,
-//             )
-//     };
-//     let actual_proof = actual_proof.into();
-//     compare_proofs(&expected_proof, &actual_proof);
-// }
+#[serial]
+#[test]
+#[ignore]
+fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
+    let (setup_cs, finalization_hint) =
+        init_cs_with_poseidon2_and_private_witnesses::<SetupCSConfig, true>(None);
+    let worker = Worker::new();
+    let prover_config = init_proof_cfg();
+    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+        &worker,
+        prover_config.fri_lde_factor,
+        prover_config.merkle_tree_cap_size,
+    );
+    let domain_size = setup_cs.max_trace_len;
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+        setup_base.clone(),
+        clone_reference_tree(&setup_tree),
+        vars_hint.clone(),
+        wits_hint.clone(),
+        &worker,
+    )
+    .unwrap();
+
+    assert!(domain_size.is_power_of_two());
+    let actual_proof = {
+        let (mut proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
+            ProvingCSConfig,
+            true,
+        >(finalization_hint.as_ref());
+        let witness = proving_cs.materialize_witness_vec();
+        let (reusable_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<
+            ProvingCSConfig,
+            false,
+        >(finalization_hint.as_ref());
+        let proof = gpu_prove_from_external_witness_data::<
+            _,
+            DefaultTranscript,
+            DefaultTreeHasher,
+            NoPow,
+            Global,
+        >(
+            &reusable_cs,
+            &witness,
+            prover_config.clone(),
+            &gpu_setup,
+            &vk,
+            (),
+            &worker,
+        )
+        .expect("gpu proof");
+
+        proof
+    };
+
+    let expected_proof = {
+        let (proving_cs, _) = init_cs_with_poseidon2_and_private_witnesses::<ProvingCSConfig, true>(
+            finalization_hint.as_ref(),
+        );
+        let worker = Worker::new();
+        let prover_config = init_proof_cfg();
+
+        proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
+                prover_config,
+                &setup_base,
+                &setup,
+                &setup_tree,
+                &vk,
+                &vars_hint,
+                &wits_hint,
+                (),
+                &worker,
+            )
+    };
+    let actual_proof = actual_proof.into();
+    compare_proofs(&expected_proof, &actual_proof);
+}
 
 fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: bool>(
     finalization_hint: Option<&FinalizationHintsForProver>,
@@ -165,6 +177,12 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
         let output = synthesize(&mut owned_cs);
         let next_available_row = owned_cs.next_available_row();
         for (column, var) in output.into_iter().enumerate() {
+            // TODO: Ask Sait
+            // I'm not sure it's ok to add a gate only if we synthesized the witness.
+            // This may yield inconsistencies between a fully synthesized cs created
+            // with DO_SYNTH=true and a reusable cs created with DO_SYNTH=false.
+            // On the other hand, in the "ordinary" zksync circuits I'm fairly sure
+            // place_gate, place_variable, and set_public are called during synthesis.
             let gate = PublicInputGate::new(var);
             owned_cs.place_gate(&gate, next_available_row);
             owned_cs.place_variable(var, next_available_row, column);
@@ -172,22 +190,19 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
         }
     }
 
-    let new_finalization_hint = if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
+    // imitates control flow of synthesis_utils::init_or_synthesize_assembly
+    if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
         let (_, finalization_hint) = owned_cs.pad_and_shrink();
-        Some(finalization_hint)
+        (owned_cs.into_assembly(), Some(finalization_hint))
     } else {
-        let finalization_hint = finalization_hint.unwrap();
-        owned_cs.pad_and_shrink_using_hint(finalization_hint);
-        None
-    };
-
-    let cs = if DO_SYNTH {
-        owned_cs.into_assembly()
-    } else {
-        owned_cs.into_assembly_for_repeated_proving(finalization_hint.unwrap())
-    };
-
-    (cs, new_finalization_hint)
+        let hint = finalization_hint.unwrap();
+        if DO_SYNTH {
+            owned_cs.pad_and_shrink_using_hint(hint);
+            (owned_cs.into_assembly(), None)
+        } else {
+            (owned_cs.into_assembly_for_repeated_proving(hint), None)
+        }
+    }
 }
 
 #[serial]
@@ -305,69 +320,77 @@ fn clone_reference_tree(
     }
 }
 
-// #[serial]
-// #[test]
-// #[ignore]
-// fn test_proof_comparison_for_sha256() {
-//     let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
-//
-//     let worker = Worker::new();
-//     let prover_config = init_proof_cfg();
-//     let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
-//         &worker,
-//         prover_config.fri_lde_factor,
-//         prover_config.merkle_tree_cap_size,
-//     );
-//     let domain_size = setup_cs.max_trace_len;
-//     let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-//     // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
-//     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
-//         setup_base.clone(),
-//         clone_reference_tree(&setup_tree),
-//         vars_hint.clone(),
-//         wits_hint.clone(),
-//         &worker,
-//     )
-//     .unwrap();
-//
-//     assert!(domain_size.is_power_of_two());
-//     let actual_proof = {
-//         let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
-//         let proof = prover::gpu_prove::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-//             &mut proving_cs,
-//             prover_config,
-//             &gpu_setup,
-//             &vk,
-//             (),
-//             &worker,
-//         )
-//         .expect("gpu proof");
-//
-//         proof
-//     };
-//
-//     let expected_proof = {
-//         let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
-//         let worker = Worker::new();
-//         let prover_config = init_proof_cfg();
-//
-//         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-//                 prover_config,
-//                 &setup_base,
-//                 &setup,
-//                 &setup_tree,
-//                 &vk,
-//                 &vars_hint,
-//                 &wits_hint,
-//                 (),
-//                 &worker,
-//             )
-//     };
-//     let actual_proof = actual_proof.into();
-//     compare_proofs(&expected_proof, &actual_proof);
-// }
+#[serial]
+#[test]
+#[ignore]
+fn test_proof_comparison_for_sha256() {
+    let (setup_cs, finalization_hint) = init_cs_for_sha256::<DevCSConfig>(None);
 
-#[allow(dead_code)]
+    let worker = Worker::new();
+    let prover_config = init_proof_cfg();
+    let (setup_base, setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+        &worker,
+        prover_config.fri_lde_factor,
+        prover_config.merkle_tree_cap_size,
+    );
+    let domain_size = setup_cs.max_trace_len;
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
+    let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+        setup_base.clone(),
+        clone_reference_tree(&setup_tree),
+        vars_hint.clone(),
+        wits_hint.clone(),
+        &worker,
+    )
+    .unwrap();
+
+    assert!(domain_size.is_power_of_two());
+    let actual_proof = {
+        let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let witness = proving_cs.materialize_witness_vec();
+        let reusable_cs = init_reusable_cs_for_sha256(finalization_hint.as_ref().unwrap());
+        let proof = gpu_prove_from_external_witness_data::<
+            _,
+            DefaultTranscript,
+            DefaultTreeHasher,
+            NoPow,
+            Global,
+        >(
+            &reusable_cs,
+            &witness,
+            prover_config.clone(),
+            &gpu_setup,
+            &vk,
+            (),
+            &worker,
+        )
+        .expect("gpu proof");
+
+        proof
+    };
+
+    let expected_proof = {
+        let (proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
+        let worker = Worker::new();
+        let prover_config = init_proof_cfg();
+
+        proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
+                prover_config,
+                &setup_base,
+                &setup,
+                &setup_tree,
+                &vk,
+                &vars_hint,
+                &wits_hint,
+                (),
+                &worker,
+            )
+    };
+    let actual_proof = actual_proof.into();
+    compare_proofs(&expected_proof, &actual_proof);
+}
+
 pub fn init_reusable_cs_for_sha256(
     finalization_hint: &FinalizationHintsForProver,
 ) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
@@ -389,7 +412,7 @@ pub fn init_reusable_cs_for_sha256(
     let _reference_output = hasher.finalize();
 
     let geometry = CSGeometry {
-        num_columns_under_copy_permutation: 20,
+        num_columns_under_copy_permutation: 32,
         num_witness_columns: 0,
         num_constant_columns: 4,
         max_allowed_constraint_degree: 4,
@@ -735,7 +758,6 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
     };
     let mut owned_cs = owned_cs.into_assembly();
     owned_cs.wait_for_witness();
-    let _worker = Worker::new_with_num_threads(8);
 
     (owned_cs, finalization_hint)
 }

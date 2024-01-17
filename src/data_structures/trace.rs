@@ -1,6 +1,6 @@
 use boojum::{
     cs::{
-        implementations::{proof::OracleQuery, prover::ProofConfig, witness::WitnessVec},
+        implementations::{proof::OracleQuery, witness::WitnessVec},
         oracle::TreeHasher,
         traits::GoodAllocator,
         LookupParameters,
@@ -11,10 +11,7 @@ use boojum::{
 use std::ops::Deref;
 use std::rc::Rc;
 
-use crate::{
-    cs::{variable_assignment, GpuSetup},
-    primitives::tree::POSEIDON_RATE,
-};
+use crate::cs::{variable_assignment, GpuSetup};
 
 use super::*;
 
