@@ -1222,7 +1222,7 @@ mod zksync {
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("./test_data/{}", main_dir);
-            let circuits = scan_directory_for_circuits(main_dir);
+            let circuits = scan_directory_for_circuits(&data_dir);
 
             let worker = &Worker::new();
             for circuit in circuits {
