@@ -263,14 +263,27 @@ impl<'a> GenericComplexPolynomialStorage<'a, MonomialBasis> {
         let num_polys = self.polynomials.len();
         let domain_size = self.polynomials[0].domain_size();
         let num_coset_ffts = 2 * num_polys;
-        ntt::batch_coset_ntt_into(
-            self.as_single_slice(),
-            result.as_single_slice_mut(),
-            coset_idx,
-            domain_size,
-            lde_degree,
-            num_coset_ffts,
-        )?;
+
+        let storage_slice = self.as_single_slice();
+        let coset_storage_slice = result.as_single_slice_mut();
+        let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        let mut num_cols_processed = 0;
+        for (storage_chunk, coset_storage_chunk) in storage_slice
+            .chunks(l2_chunk_elems)
+            .zip(coset_storage_slice.chunks_mut(l2_chunk_elems))
+        {
+            let num_cols_this_chunk = storage_chunk.len() / domain_size;
+            ntt::batch_coset_ntt_into(
+                storage_chunk,
+                coset_storage_chunk,
+                coset_idx,
+                domain_size,
+                lde_degree,
+                num_cols_this_chunk,
+            )?;
+            num_cols_processed += num_cols_this_chunk;
+        }
+        assert_eq!(num_cols_processed, num_coset_ffts);
 
         Ok(())
     }

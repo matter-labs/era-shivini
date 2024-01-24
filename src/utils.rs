@@ -1,4 +1,6 @@
 use boojum::cs::implementations::utils::domain_generator_for_size;
+use cudart::device::{device_get_attribute, get_device};
+use cudart_sys::CudaDeviceAttr;
 
 use super::*;
 
@@ -246,4 +248,33 @@ pub fn assert_multiset_adjacent_ext<P: PolyForm>(src: &[&[ComplexPoly<P>]]) {
         }
     }
     assert_adjacent(&flattened[..])
+}
+
+// TODO: not thread safe, hence "unsafe"s below
+// We could use a lazy_static here, but shivini in general isn't thread safe now,
+// so it would be overkill.
+const MAX_DEVS: usize = 16;
+static mut L2_CACHE_SIZES_BYTES: [Option<usize>; MAX_DEVS] = [None; MAX_DEVS];
+
+pub(crate) fn get_l2_chunk_elems(n: usize) -> CudaResult<usize> {
+    let dev = get_device()?;
+    let l2_cache_size_bytes =
+        if let Some(l2_size_this_dev) = unsafe { L2_CACHE_SIZES_BYTES[dev as usize] } {
+            l2_size_this_dev
+        } else {
+            let l2_size_this_dev = device_get_attribute(CudaDeviceAttr::L2CacheSize, dev)? as usize;
+            unsafe {
+                L2_CACHE_SIZES_BYTES[dev as usize] = Some(l2_size_this_dev);
+            }
+            l2_size_this_dev
+        };
+    // Targeting 3/8 of L2 capacity seems to yield good performance on L4
+    let l2_cache_size_with_safety_margin = (l2_cache_size_bytes * 3) / 8;
+    let bytes_per_col = 8 * n;
+    let cols_in_l2 = l2_cache_size_with_safety_margin / bytes_per_col;
+    println!("cols_in_l2 {}", cols_in_l2);
+    if cols_in_l2 > 0 {
+        return Ok(n * cols_in_l2);
+    }
+    Ok(n)
 }

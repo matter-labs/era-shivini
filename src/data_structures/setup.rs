@@ -301,15 +301,16 @@ impl GenericSetupStorage<LagrangeBasis> {
         let domain_size = self.domain_size();
         let num_polys = self.num_polys();
 
-        ntt::batch_ntt(
-            self.as_single_slice_mut(),
-            false,
-            true,
-            domain_size,
-            num_polys,
-        )?;
-
-        ntt::batch_bitreverse(self.as_single_slice_mut(), domain_size)?;
+        let storage_slice = self.storage.as_single_slice_mut();
+        let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        let mut num_cols_processed = 0;
+        for storage_chunk in storage_slice.chunks_mut(l2_chunk_elems) {
+            let num_cols_this_chunk = storage_chunk.len() / domain_size;
+            ntt::batch_ntt(storage_chunk, false, true, domain_size, num_cols_this_chunk)?;
+            ntt::batch_bitreverse(storage_chunk, domain_size)?;
+            num_cols_processed += num_cols_this_chunk;
+        }
+        assert_eq!(num_cols_processed, num_polys);
 
         let monomials = unsafe { std::mem::transmute(self) };
 
@@ -330,14 +331,26 @@ impl GenericSetupStorage<MonomialBasis> {
         assert_eq!(coset_storage.domain_size(), domain_size);
         assert_eq!(coset_storage.num_polys(), num_polys);
 
-        ntt::batch_coset_ntt_into(
-            self.as_single_slice(),
-            coset_storage.as_single_slice_mut(),
-            coset_idx,
-            domain_size,
-            lde_degree,
-            num_polys,
-        )?;
+        let storage_slice = self.storage.as_single_slice();
+        let coset_storage_slice = coset_storage.storage.as_single_slice_mut();
+        let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        let mut num_cols_processed = 0;
+        for (storage_chunk, coset_storage_chunk) in storage_slice
+            .chunks(l2_chunk_elems)
+            .zip(coset_storage_slice.chunks_mut(l2_chunk_elems))
+        {
+            let num_cols_this_chunk = storage_chunk.len() / domain_size;
+            ntt::batch_coset_ntt_into(
+                storage_chunk,
+                coset_storage_chunk,
+                coset_idx,
+                domain_size,
+                lde_degree,
+                num_cols_this_chunk,
+            )?;
+            num_cols_processed += num_cols_this_chunk;
+        }
+        assert_eq!(num_cols_processed, num_polys);
 
         Ok(())
     }

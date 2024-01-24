@@ -425,6 +425,7 @@ pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
         transferred.record(&inner_h2d_stream)?;
         get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
 
+        // Don't bother with L2 chunking, local witness support will be removed soon
         ntt::batch_ntt_into(
             raw_poly_chunk,
             monomial_chunk,
@@ -519,16 +520,33 @@ impl GenericTraceStorage<LagrangeBasis> {
 
         let mut monomial_storage = GenericStorage::allocate(num_polys, domain_size)?;
 
-        ntt::batch_ntt_into(
-            self.storage.as_single_slice(),
-            monomial_storage.as_single_slice_mut(),
-            false,
-            true,
-            domain_size,
-            num_polys,
-        )?;
-
-        ntt::batch_bitreverse(monomial_storage.as_single_slice_mut(), domain_size)?;
+        let storage_slice = self.storage.as_single_slice();
+        let monomial_storage_slice = monomial_storage.as_single_slice_mut();
+        // The NTT below is out of place. So why use domain_size instead of 2 * domain_size?
+        // Internally, the NTT's first kernel reads input and writes output.
+        // Subsequent NTT kernel(s) then acts in-place on the output.
+        // The bitreverse kernel also acts in-place on the output.
+        // So the data we want to persist in L2 between kernels is simply the output,
+        // and the persistence flow is the same as if we were acting in-place on the output.
+        let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        let mut num_cols_processed = 0;
+        for (storage_chunk, monomial_storage_chunk) in storage_slice
+            .chunks(l2_chunk_elems)
+            .zip(monomial_storage_slice.chunks_mut(l2_chunk_elems))
+        {
+            let num_cols_this_chunk = storage_chunk.len() / domain_size;
+            ntt::batch_ntt_into(
+                storage_chunk,
+                monomial_storage_chunk,
+                false,
+                true,
+                domain_size,
+                num_cols_this_chunk,
+            )?;
+            ntt::batch_bitreverse(monomial_storage_chunk, domain_size)?;
+            num_cols_processed += num_cols_this_chunk;
+        }
+        assert_eq!(num_cols_processed, num_polys);
 
         let monomials = GenericTraceStorage {
             storage: monomial_storage,
@@ -552,15 +570,26 @@ impl GenericTraceStorage<MonomialBasis> {
         let Self { storage, .. } = self;
         let domain_size = storage.domain_size;
 
-        // let mut coset_storage = GenericStorage::allocate(num_polys, domain_size)?;
-        ntt::batch_coset_ntt_into(
-            storage.as_ref(),
-            coset_storage.storage.as_mut(),
-            coset_idx,
-            domain_size,
-            lde_degree,
-            num_polys,
-        )?;
+        let storage_slice = storage.as_single_slice();
+        let coset_storage_slice = coset_storage.storage.as_single_slice_mut();
+        let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        let mut num_cols_processed = 0;
+        for (storage_chunk, coset_storage_chunk) in storage_slice
+            .chunks(l2_chunk_elems)
+            .zip(coset_storage_slice.chunks_mut(l2_chunk_elems))
+        {
+            let num_cols_this_chunk = storage_chunk.len() / domain_size;
+            ntt::batch_coset_ntt_into(
+                storage_chunk,
+                coset_storage_chunk,
+                coset_idx,
+                domain_size,
+                lde_degree,
+                num_cols_this_chunk,
+            )?;
+            num_cols_processed += num_cols_this_chunk;
+        }
+        assert_eq!(num_cols_processed, num_polys);
 
         Ok(())
     }
