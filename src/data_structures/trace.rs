@@ -1,6 +1,6 @@
 use boojum::{
     cs::{
-        implementations::{proof::OracleQuery, prover::ProofConfig, witness::WitnessVec},
+        implementations::{proof::OracleQuery, witness::WitnessVec},
         oracle::TreeHasher,
         traits::GoodAllocator,
         LookupParameters,
@@ -11,10 +11,7 @@ use boojum::{
 use std::ops::Deref;
 use std::rc::Rc;
 
-use crate::{
-    cs::{variable_assignment, GpuSetup},
-    primitives::tree::POSEIDON_RATE,
-};
+use crate::cs::{variable_assignment, GpuSetup};
 
 use super::*;
 
@@ -340,174 +337,6 @@ pub fn construct_trace_storage_from_remote_witness_data<A: GoodAllocator>(
         subtrees,
         trace_tree_cap,
     ))
-}
-
-pub fn construct_trace_storage_from_local_witness_data<A: GoodAllocator>(
-    h_variables: Vec<Vec<F, A>>,
-    h_witness: Vec<Vec<F, A>>,
-    h_multiplicities: Vec<Vec<F, A>>,
-    used_lde_degree: usize,
-    domain_size: usize,
-    proof_config: &ProofConfig,
-) -> CudaResult<(
-    GenericTraceStorage<LagrangeBasis>,
-    GenericTraceStorage<MonomialBasis>,
-    Vec<SubTree>,
-    Vec<[F; 4]>,
-)> {
-    let fri_lde_degree = proof_config.fri_lde_factor;
-    let cap_size = proof_config.merkle_tree_cap_size;
-    assert_eq!(fri_lde_degree, 2);
-
-    let mut flattened_host_cols = vec![];
-    for col in h_variables
-        .iter()
-        .chain(h_witness.iter())
-        .chain(h_multiplicities.iter())
-    {
-        flattened_host_cols.push(col);
-    }
-
-    let trace_layout = TraceLayout {
-        num_variable_cols: h_variables.len(),
-        num_witness_cols: h_witness.len(),
-        num_multiplicity_cols: h_multiplicities.len(),
-    };
-    let num_polys = trace_layout.num_polys();
-    let mut raw_storage = GenericStorage::allocate(num_polys, domain_size)?;
-    let mut monomial_storage = GenericStorage::allocate(num_polys, domain_size)?;
-    let mut first_coset_storage = GenericStorage::allocate(num_polys, domain_size)?;
-    let mut second_coset_storage = GenericStorage::allocate(num_polys, domain_size)?;
-
-    let inner_h2d_stream = CudaStream::create()?;
-    let _start = std::time::Instant::now();
-
-    let mut first_subtree_all_nodes = dvec!(2 * NUM_EL_PER_HASH * domain_size);
-    let (first_subtree_leaf_hashes, first_subtree_layer_nodes) =
-        first_subtree_all_nodes.split_at_mut(NUM_EL_PER_HASH * domain_size);
-
-    let mut second_subtree_all_nodes = dvec!(2 * NUM_EL_PER_HASH * domain_size);
-    let (second_subtree_leaf_hashes, second_subtree_layer_nodes) =
-        second_subtree_all_nodes.split_at_mut(NUM_EL_PER_HASH * domain_size);
-
-    for (
-        outer_idx,
-        ((((h_vars_chunk, raw_poly_chunk), monomial_chunk), first_coset_chunk), second_coset_chunk),
-    ) in flattened_host_cols
-        .chunks(POSEIDON_RATE)
-        .zip(raw_storage.as_mut().chunks_mut(POSEIDON_RATE * domain_size))
-        .zip(
-            monomial_storage
-                .as_mut()
-                .chunks_mut(POSEIDON_RATE * domain_size),
-        )
-        .zip(
-            first_coset_storage
-                .as_mut()
-                .chunks_mut(POSEIDON_RATE * domain_size),
-        )
-        .zip(
-            second_coset_storage
-                .as_mut()
-                .chunks_mut(POSEIDON_RATE * domain_size),
-        )
-        .enumerate()
-    {
-        let transferred = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-        for (vars, raw_poly) in h_vars_chunk
-            .into_iter()
-            .zip(raw_poly_chunk.chunks_mut(domain_size))
-        {
-            mem::h2d_on_stream(&vars[..], raw_poly, &inner_h2d_stream)?;
-        }
-        let num_round_polys = h_vars_chunk.len();
-        assert!(num_round_polys <= POSEIDON_RATE);
-        transferred.record(&inner_h2d_stream)?;
-        get_stream().wait_event(&transferred, CudaStreamWaitEventFlags::DEFAULT)?;
-
-        ntt::batch_ntt_into(
-            raw_poly_chunk,
-            monomial_chunk,
-            false,
-            true,
-            domain_size,
-            num_round_polys,
-        )?;
-        ntt::batch_bitreverse(monomial_chunk, domain_size)?;
-        // TODO: those two can be computed on the different streams in parallel
-        ntt::batch_coset_ntt_into(
-            monomial_chunk,
-            first_coset_chunk,
-            0,
-            domain_size,
-            used_lde_degree,
-            num_round_polys,
-        )?;
-
-        ntt::batch_coset_ntt_into(
-            monomial_chunk,
-            second_coset_chunk,
-            1,
-            domain_size,
-            used_lde_degree,
-            num_round_polys,
-        )?;
-        let is_first = outer_idx == 0;
-        let is_last = outer_idx == flattened_host_cols.chunks(POSEIDON_RATE).len() - 1;
-        // TODO: those two can be computed on the different streams in parallel
-        super::primitives::tree::build_leaves_from_chunk(
-            first_coset_chunk,
-            first_subtree_leaf_hashes,
-            domain_size,
-            !is_first,
-            !is_last,
-        )?;
-        super::primitives::tree::build_leaves_from_chunk(
-            second_coset_chunk,
-            second_subtree_leaf_hashes,
-            domain_size,
-            !is_first,
-            !is_last,
-        )?;
-    }
-
-    super::primitives::tree::build_tree_nodes(
-        first_subtree_leaf_hashes,
-        first_subtree_layer_nodes,
-        domain_size,
-        cap_size,
-    )?;
-
-    let coset_cap_size = coset_cap_size(cap_size, fri_lde_degree);
-    let first_tree_cap = get_tree_cap_from_nodes(&first_subtree_layer_nodes, coset_cap_size)?;
-    let fist_subtree = SubTree::new(first_subtree_all_nodes, domain_size, coset_cap_size, 0);
-
-    super::primitives::tree::build_tree_nodes(
-        second_subtree_leaf_hashes,
-        second_subtree_layer_nodes,
-        domain_size,
-        cap_size,
-    )?;
-    let second_tree_cap = get_tree_cap_from_nodes(&second_subtree_layer_nodes, coset_cap_size)?;
-    let second_subtree = SubTree::new(second_subtree_all_nodes, domain_size, coset_cap_size, 1);
-
-    let mut subtrees = vec![fist_subtree, second_subtree];
-    let mut subtree_caps = vec![first_tree_cap, second_tree_cap];
-    let trace_tree_cap = subtree_caps.compute_cap::<DefaultTreeHasher>(&mut subtrees, cap_size)?;
-
-    let raw_storage = GenericTraceStorage {
-        storage: raw_storage,
-        coset_idx: None,
-        layout: trace_layout.clone(),
-        form: std::marker::PhantomData,
-    };
-    let monomial_storage = GenericTraceStorage {
-        storage: monomial_storage,
-        coset_idx: None,
-        layout: trace_layout,
-        form: std::marker::PhantomData,
-    };
-    Ok((raw_storage, monomial_storage, subtrees, trace_tree_cap))
 }
 
 impl GenericTraceStorage<LagrangeBasis> {
