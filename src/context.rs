@@ -34,9 +34,16 @@ impl ProverContext {
             _HOST_ALLOCATOR = Some(host_alloc);
             _SMALL_HOST_ALLOCATOR = Some(small_host_alloc);
             _EXEC_STREAM = Some(Stream::create()?);
+            _STREAM0 = Some(Stream::create()?);
+            _STREAM1 = Some(Stream::create()?);
             _H2D_STREAM = Some(Stream::create()?);
             _D2H_STREAM = Some(Stream::create()?);
         }
+
+        // fine and coarse powers + plenty of safety margin
+        set_l2_persistence_carveout(2 * 8 * 8 * (1 << 12))?;
+        set_l2_persistence_for_twiddles(get_stream0())?;
+        set_l2_persistence_for_twiddles(get_stream1())?;
 
         Ok(Self {})
     }
@@ -189,11 +196,21 @@ impl Drop for ProverContext {
 
 pub(crate) static mut _CUDA_CONTEXT: Option<CudaContext> = None;
 pub(crate) static mut _EXEC_STREAM: Option<Stream> = None;
+pub(crate) static mut _STREAM0: Option<Stream> = None;
+pub(crate) static mut _STREAM1: Option<Stream> = None;
 pub(crate) static mut _H2D_STREAM: Option<Stream> = None;
 pub(crate) static mut _D2H_STREAM: Option<Stream> = None;
 
 pub(crate) fn get_stream() -> &'static CudaStream {
     unsafe { &_EXEC_STREAM.as_ref().expect("execution stream").inner }
+}
+
+pub(crate) fn get_stream0() -> &'static CudaStream {
+    unsafe { &_STREAM0.as_ref().expect("execution stream").inner }
+}
+
+pub(crate) fn get_stream1() -> &'static CudaStream {
+    unsafe { &_STREAM1.as_ref().expect("execution stream").inner }
 }
 
 pub(crate) fn get_h2d_stream() -> &'static CudaStream {

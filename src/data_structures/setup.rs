@@ -360,10 +360,8 @@ impl GenericSetupStorage<MonomialBasis> {
         let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
         let mut num_cols_processed = 0;
         let main_stream = get_stream();
-        let stream0 = CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING)?;
-        let stream1 = CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING)?;
-        set_l2_persistence_for_twiddles(&stream0)?;
-        set_l2_persistence_for_twiddles(&stream1)?;
+        let stream0 = get_stream0();
+        let stream1 = get_stream1();
         let start_event = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
         start_event.record(&main_stream)?;
         stream0.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
@@ -419,8 +417,6 @@ impl GenericSetupStorage<MonomialBasis> {
         main_stream.wait_event(&end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
         main_stream.wait_event(&end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
 
-        stream0.destroy()?;
-        stream1.destroy()?;
         end_event0.destroy()?;
         end_event1.destroy()?;
 

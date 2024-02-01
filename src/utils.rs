@@ -282,22 +282,28 @@ pub(crate) fn get_l2_chunk_elems(n: usize) -> CudaResult<usize> {
 
 use cudart::slice::DeviceSlice;
 
+pub(crate) fn set_l2_persistence_carveout(num_bytes: usize) -> CudaResult<()> {
+    use cudart_sys::CudaLimit;
+    use cudart::device::device_set_limit;
+
+    let dev = get_device()?;
+    let l2_persist_max = device_get_attribute(CudaDeviceAttr::MaxPersistingL2CacheSize, dev)?;
+    let carveout = std::cmp::min(num_bytes, l2_persist_max as usize);
+    device_set_limit(CudaLimit::PersistingL2CacheSize, carveout)?;
+
+    Ok(())
+}
+
 pub(crate) fn set_l2_persistence(
     data: &DeviceSlice<F>,
     stream: &CudaStream,
 ) -> CudaResult<()> {
-    use cudart_sys::CudaLimit;
-    use cudart::device::device_set_limit;
     use cudart::execution::CudaLaunchAttribute;
     use cudart_sys::CudaAccessProperty;
     use cudart_sys::CudaLaunchAttributeID;
     use cudart_sys::CudaLaunchAttributeValue;
     use cudart_sys::CudaAccessPolicyWindow;
 
-    let dev = get_device()?;
-    let l2_size_this_dev = device_get_attribute(CudaDeviceAttr::L2CacheSize, dev)?;
-    let l2_persist_max = device_get_attribute(CudaDeviceAttr::MaxPersistingL2CacheSize, dev)?;
-    device_set_limit(CudaLimit::PersistingL2CacheSize, l2_persist_max as usize)?;
     let num_bytes = 8 * data.len();
     let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(
         CudaAccessPolicyWindow {
