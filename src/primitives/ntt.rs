@@ -78,6 +78,49 @@ fn batch_coset_ntt_raw_into(
     )
 }
 
+pub fn batch_coset_ntt_raw_into_with_stream(
+    inputs: &[F],
+    outputs: &mut [F],
+    bitreversed_input: bool,
+    inverse: bool,
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+    stream: &CudaStream,
+) -> CudaResult<()> {
+    assert_eq!(inputs.len(), num_polys * domain_size);
+    // The following is not required in general.
+    // boojum-cuda's kernels can use a different stride for inputs and outputs.
+    // But it's true for our current use cases, so we enforce it for now.
+    assert_eq!(inputs.len(), outputs.len());
+    assert!(domain_size.is_power_of_two());
+    let log_n = domain_size.trailing_zeros();
+    let log_lde_factor = lde_degree.trailing_zeros();
+    let stride = 1 << log_n;
+    let coset_idx = bitreverse_index(coset_idx, log_lde_factor as usize);
+    let d_inputs = unsafe { DeviceSlice::from_slice(inputs) };
+    let d_outputs = unsafe { DeviceSlice::from_mut_slice(outputs) };
+    // let stream = get_stream();
+    let inputs_offset = 0; // currently unused, but explicit for readability.
+    let outputs_offset = 0; // currently unused, but explicit for readability.
+    boojum_cuda::ntt::batch_ntt_out_of_place(
+        d_inputs,
+        d_outputs,
+        log_n,
+        num_polys as u32,
+        inputs_offset,
+        outputs_offset,
+        stride,
+        stride,
+        bitreversed_input,
+        inverse,
+        log_lde_factor,
+        coset_idx as u32,
+        stream,
+    )
+}
+
 // Convenience wrappers for our use cases
 
 pub(crate) fn batch_ntt(

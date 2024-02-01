@@ -270,6 +270,7 @@ pub(crate) fn get_l2_chunk_elems(n: usize) -> CudaResult<usize> {
         };
     // Targeting 3/8 of L2 capacity seems to yield good performance on L4
     let l2_cache_size_with_safety_margin = (l2_cache_size_bytes * 3) / 8;
+    // let l2_cache_size_with_safety_margin = l2_cache_size_bytes;
     let bytes_per_col = 8 * n;
     let cols_in_l2 = l2_cache_size_with_safety_margin / bytes_per_col;
     println!("cols_in_l2 {}", cols_in_l2);
@@ -277,4 +278,48 @@ pub(crate) fn get_l2_chunk_elems(n: usize) -> CudaResult<usize> {
         return Ok(n * cols_in_l2);
     }
     Ok(n)
+}
+
+use cudart::slice::DeviceSlice;
+
+pub(crate) fn set_l2_persistence(
+    data: &DeviceSlice<F>,
+    stream: &CudaStream,
+) -> CudaResult<()> {
+    use cudart_sys::CudaLimit;
+    use cudart::device::device_set_limit;
+    use cudart::execution::CudaLaunchAttribute;
+    use cudart_sys::CudaAccessProperty;
+    use cudart_sys::CudaLaunchAttributeID;
+    use cudart_sys::CudaLaunchAttributeValue;
+    use cudart_sys::CudaAccessPolicyWindow;
+
+    let dev = get_device()?;
+    let l2_size_this_dev = device_get_attribute(CudaDeviceAttr::L2CacheSize, dev)?;
+    let l2_persist_max = device_get_attribute(CudaDeviceAttr::MaxPersistingL2CacheSize, dev)?;
+    device_set_limit(CudaLimit::PersistingL2CacheSize, l2_persist_max as usize)?;
+    let num_bytes = 8 * data.len();
+    let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(
+        CudaAccessPolicyWindow {
+            base_ptr: data.as_ptr() as *mut std::os::raw::c_void,
+            num_bytes,
+            hitRatio: 1.0,
+            hitProp: CudaAccessProperty::Persisting,
+            missProp: CudaAccessProperty::Streaming,
+        },
+    );
+    stream.set_attribute(stream_attribute)?;
+
+    Ok(())
+}
+
+pub(crate) fn set_l2_persistence_for_twiddles(stream: &CudaStream) -> CudaResult<()>{
+    let ctx = unsafe { context::_CUDA_CONTEXT.as_ref().unwrap() };
+    set_l2_persistence(ctx.powers_of_w_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_coarse.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_fine_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_coarse_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_f_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_f_coarse.as_ref(), stream)?;
+    Ok(())
 }

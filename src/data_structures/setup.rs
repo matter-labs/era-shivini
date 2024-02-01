@@ -5,6 +5,9 @@ use boojum::cs::{
 use std::ops::Deref;
 use std::rc::Rc;
 
+use cudart::event::{CudaEvent, CudaEventCreateFlags};
+use cudart::stream::{CudaStream, CudaStreamCreateFlags, CudaStreamWaitEventFlags};
+
 use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
 
 use super::*;
@@ -331,25 +334,96 @@ impl GenericSetupStorage<MonomialBasis> {
         assert_eq!(coset_storage.domain_size(), domain_size);
         assert_eq!(coset_storage.num_polys(), num_polys);
 
+        // let storage_slice = self.storage.as_single_slice();
+        // let coset_storage_slice = coset_storage.storage.as_single_slice_mut();
+        // let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+        // let mut num_cols_processed = 0;
+        // for (storage_chunk, coset_storage_chunk) in storage_slice
+        //     .chunks(l2_chunk_elems)
+        //     .zip(coset_storage_slice.chunks_mut(l2_chunk_elems))
+        // {
+        //     let num_cols_this_chunk = storage_chunk.len() / domain_size;
+        //     ntt::batch_coset_ntt_into(
+        //         storage_chunk,
+        //         coset_storage_chunk,
+        //         coset_idx,
+        //         domain_size,
+        //         lde_degree,
+        //         num_cols_this_chunk,
+        //     )?;
+        //     num_cols_processed += num_cols_this_chunk;
+        // }
+        // assert_eq!(num_cols_processed, num_polys);
+
         let storage_slice = self.storage.as_single_slice();
         let coset_storage_slice = coset_storage.storage.as_single_slice_mut();
         let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
         let mut num_cols_processed = 0;
+        let main_stream = get_stream();
+        let stream0 = CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING)?;
+        let stream1 = CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING)?;
+        set_l2_persistence_for_twiddles(&stream0)?;
+        set_l2_persistence_for_twiddles(&stream1)?;
+        let start_event = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+        start_event.record(&main_stream)?;
+        stream0.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+        stream1.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
         for (storage_chunk, coset_storage_chunk) in storage_slice
             .chunks(l2_chunk_elems)
             .zip(coset_storage_slice.chunks_mut(l2_chunk_elems))
         {
             let num_cols_this_chunk = storage_chunk.len() / domain_size;
-            ntt::batch_coset_ntt_into(
-                storage_chunk,
-                coset_storage_chunk,
-                coset_idx,
-                domain_size,
-                lde_degree,
-                num_cols_this_chunk,
-            )?;
+            let num_cols_stream0 = num_cols_this_chunk / 2;
+            let num_cols_stream1 = num_cols_this_chunk - num_cols_stream0;
+            let elems_stream0 = num_cols_stream0 * domain_size;
+            // ntt::batch_coset_ntt_into(
+            //     storage_chunk,
+            //     coset_storage_chunk,
+            //     coset_idx,
+            //     domain_size,
+            //     lde_degree,
+            //     num_cols_this_chunk,
+            // )?;
+            if num_cols_stream0 > 0 {
+                ntt::batch_coset_ntt_raw_into_with_stream(
+                    &storage_chunk[..elems_stream0],
+                    &mut coset_storage_chunk[..elems_stream0],
+                    false,
+                    false,
+                    coset_idx,
+                    domain_size,
+                    lde_degree,
+                    num_cols_stream0,
+                    &stream0,
+                )?;
+            }
+            if num_cols_stream1 > 0 {
+                ntt::batch_coset_ntt_raw_into_with_stream(
+                    &storage_chunk[elems_stream0..],
+                    &mut coset_storage_chunk[elems_stream0..],
+                    false,
+                    false,
+                    coset_idx,
+                    domain_size,
+                    lde_degree,
+                    num_cols_stream1,
+                    &stream1,
+                )?;
+            }
             num_cols_processed += num_cols_this_chunk;
         }
+        let end_event0 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+        let end_event1 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+        end_event0.record(&stream0)?;
+        end_event1.record(&stream1)?;
+        main_stream.wait_event(&end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
+        main_stream.wait_event(&end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
+
+        stream0.destroy()?;
+        stream1.destroy()?;
+        end_event0.destroy()?;
+        end_event1.destroy()?;
+
         assert_eq!(num_cols_processed, num_polys);
 
         Ok(())

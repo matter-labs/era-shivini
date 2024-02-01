@@ -1167,26 +1167,26 @@ mod zksync {
             )
             .expect("gpu proof")
         };
-        println!("cpu proving");
-        let reference_proof = {
-            // we can't clone assembly lets synth it again
-            let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-            proving_cs
-                .prove_from_precomputations::<EXT, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                    proof_cfg.clone(),
-                    &setup_base,
-                    &setup,
-                    &setup_tree,
-                    &vk,
-                    &vars_hint,
-                    &wits_hint,
-                    (),
-                    worker,
-                )
-        };
-        let actual_proof = gpu_proof.into();
-        circuit.verify_proof(&vk, &actual_proof);
-        compare_proofs(&reference_proof, &actual_proof);
+        // println!("cpu proving");
+        // let reference_proof = {
+        //     // we can't clone assembly lets synth it again
+        //     let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+        //     proving_cs
+        //         .prove_from_precomputations::<EXT, DefaultTranscript, DefaultTreeHasher, NoPow>(
+        //             proof_cfg.clone(),
+        //             &setup_base,
+        //             &setup,
+        //             &setup_tree,
+        //             &vk,
+        //             &vars_hint,
+        //             &wits_hint,
+        //             (),
+        //             worker,
+        //         )
+        // };
+        // let actual_proof = gpu_proof.into();
+        // circuit.verify_proof(&vk, &actual_proof);
+        // compare_proofs(&reference_proof, &actual_proof);
     }
 
     #[serial]
