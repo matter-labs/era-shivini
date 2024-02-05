@@ -9,7 +9,9 @@ use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::reference_cs::{CSReferenceAssembly, CSReferenceImplementation};
 use boojum::cs::implementations::setup::FinalizationHintsForProver;
 use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
+use boojum::dag::{resolvers, CircuitResolver};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
 use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
 use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
@@ -263,7 +265,6 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
 
     let builder_impl = CsReferenceImplementationBuilder::<F, P, CFG>::new(
         geometry,
-        num_vars.unwrap(),
         max_trace_len.unwrap(),
     );
     let builder = new_builder::<_, F>(builder_impl);
@@ -287,12 +288,103 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
         );
     }
 
-    fn into_assembly<CFG: CSConfig, GC: GateConfigurationHolder<F>, T: StaticToolboxHolder>(
+    // struct Setup; struct ProveOnce; struct ProveRepeated;
+    //
+    // trait Scenario {
+    // }
+    // impl Scenario for Setup {}
+    // impl Scenario for ProveOnce {}
+    // impl Scenario for ProveRepeated {}
+    //
+    // trait IntoAssembly<const DO_SYNTH: bool> {
+    //     fn into_assembly<CFG, GC, T, CR>(
+    //         cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
+    //         do_synth: bool,
+    //         finalization_hint: Option<&FinalizationHintsForProver>,
+    //     ) -> (
+    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
+    //         Option<FinalizationHintsForProver>,
+    //     )
+    //     where 
+    //         CFG: CSConfig,
+    //         GC: GateConfigurationHolder<F>,
+    //         T: StaticToolboxHolder,
+    //         CR: CircuitResolver<F, CFG::ResolverConfig>;
+    // }
+    // struct Caller;
+    //
+    // impl IntoAssembly< false> for Caller {
+    //     fn into_assembly<CFG, GC, T, CR>(
+    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
+    //         _do_synth: bool,
+    //         _finalization_hint: Option<&FinalizationHintsForProver>,
+    //     ) -> (
+    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
+    //         Option<FinalizationHintsForProver>,
+    //     )
+    //     where 
+    //         CFG: CSConfig,
+    //         GC: GateConfigurationHolder<F>,
+    //         T: StaticToolboxHolder,
+    //         CR: CircuitResolver<F, CFG::ResolverConfig>,
+    //     {
+    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP);
+    //
+    //         let (_, finalization_hint) = cs.pad_and_shrink();
+    //         (cs.into_assembly(), Some(finalization_hint))
+    //     }
+    // }
+    //
+    // impl IntoAssembly< true> for Caller {
+    //     fn into_assembly<CFG, GC, T, CR>(
+    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
+    //         _do_synth: bool,
+    //         finalization_hint: Option<&FinalizationHintsForProver>,
+    //     ) -> (
+    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
+    //         Option<FinalizationHintsForProver>,
+    //     )
+    //     where 
+    //         CFG: CSConfig,
+    //         GC: GateConfigurationHolder<F>,
+    //         T: StaticToolboxHolder,
+    //         CR: CircuitResolver<F, CFG::ResolverConfig>,
+    //     {
+    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP == false);
+    //         let hint = finalization_hint.unwrap();
+    //         cs.pad_and_shrink_using_hint(hint);
+    //         (cs.into_assembly(), None)
+    //     }
+    // }
+
+    // impl IntoAssembly<false, false> for Caller {
+    //     fn into_assembly<CFG, GC, T, CrI>(
+    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CrI>,
+    //         _do_synth: bool,
+    //         finalization_hint: Option<&FinalizationHintsForProver>,
+    //     ) -> (
+    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
+    //         Option<FinalizationHintsForProver>,
+    //     )
+    //     where 
+    //         CFG: CSConfig,
+    //         GC: GateConfigurationHolder<F>,
+    //         T: StaticToolboxHolder,
+    //         CrI: CircuitResolver<F, CFG::ResolverConfig>,
+    //     {
+    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP);
+    //         let hint = finalization_hint.unwrap();
+    //         (cs.into_assembly_for_repeated_proving(hint), None)
+    //     }
+    // }
+
+
+    fn into_assembly<CFG: CSConfig, GC: GateConfigurationHolder<F>, T: StaticToolboxHolder, A: GoodAllocator>(
         mut cs: CSReferenceImplementation<F, P, CFG, GC, T>,
         do_synth: bool,
         finalization_hint: Option<&FinalizationHintsForProver>,
     ) -> (
-        CSReferenceAssembly<F, F, CFG>,
+        CSReferenceAssembly<F, F, CFG, A>,
         Option<FinalizationHintsForProver>,
     ) {
         if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
@@ -309,11 +401,16 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
         }
     }
 
+
+        
+
+    let builder_arg = num_vars.unwrap();
+
     match circuit {
         CircuitWrapper::Base(base_circuit) => match base_circuit {
             ZkSyncBaseLayerCircuit::MainVM(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -322,7 +419,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::CodeDecommittmentsSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -331,7 +428,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::CodeDecommitter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -340,7 +437,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::LogDemuxer(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -349,7 +446,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::KeccakRoundFunction(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -358,7 +455,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::Sha256RoundFunction(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -367,7 +464,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::ECRecover(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -376,7 +473,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::RAMPermutation(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -385,7 +482,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::StorageSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -394,7 +491,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::StorageApplication(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -403,7 +500,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::EventsSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -412,7 +509,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::L1MessagesSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -421,7 +518,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncBaseLayerCircuit::L1MessagesHasher(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -432,7 +529,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
         CircuitWrapper::Recursive(recursive_circuit) => match recursive_circuit {
             ZkSyncRecursiveLayerCircuit::SchedulerCircuit(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);
@@ -441,7 +538,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             }
             ZkSyncRecursiveLayerCircuit::NodeLayerCircuit(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);
@@ -462,7 +559,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesSorter(inner)
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesHasher(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);

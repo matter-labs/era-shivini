@@ -134,8 +134,8 @@ pub fn materialize_variable_cols_from_hints<
     let num_cols = hints.len();
     // assume that dag is resolved;
     use boojum::dag::WitnessSource;
-    let vars_storage = &cs.variables_storage.read().unwrap();
-    assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
+    let vars_storage = &cs.witness.as_ref().unwrap();
+    // assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
 
     let mut result: Vec<_> = (0..num_cols)
         .map(|_| {
@@ -157,7 +157,7 @@ pub fn materialize_variable_cols_from_hints<
                         if var & PACKED_PLACEHOLDER_BITMASK == 0 {
                             let place =
                                 Place::from_variable(Variable::from_variable_index(*var as u64));
-                            *dst = vars_storage.get_value_unchecked(place);
+                            *dst = vars_storage.all_values[*var as usize];
                         } else {
                             // we can use 0 as a substitue for all undefined variables,
                             // or add ZK into them
@@ -182,8 +182,8 @@ pub fn materialzie_witness_cols_from_hints<
     assert!(domain_size.is_power_of_two());
     // assume that dag is resolved;
     use boojum::dag::WitnessSource;
-    let vars_storage = &cs.variables_storage.read().unwrap();
-    assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
+    let vars_storage = &cs.witness.as_ref().unwrap();
+    // assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
     let num_cols = hints.len();
     let mut result: Vec<_> = (0..num_cols)
         .map(|_| {
@@ -205,7 +205,7 @@ pub fn materialzie_witness_cols_from_hints<
                         if var & PACKED_PLACEHOLDER_BITMASK == 0 {
                             let place =
                                 Place::from_witness(Witness::from_witness_index(*var as u64));
-                            *dst = vars_storage.get_value_unchecked(place);
+                            *dst = vars_storage.all_values[*var as usize];
                         } else {
                             // we can use 0 as a substitue for all undefined variables,
                             // or add ZK into them
@@ -282,8 +282,6 @@ pub fn gpu_prove<
         )
     };
 
-    cs.wait_for_witness();
-    use boojum::dag::WitnessSource;
     let time = std::time::Instant::now();
     assert!(cs.next_available_place_idx() > 0, "CS shouldn't be empty");
     let domain_size = cs.max_trace_len;
@@ -310,11 +308,10 @@ pub fn gpu_prove<
         )?;
     let num_public_inputs = cs.public_inputs.len();
     let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
-    let vars_storage = &cs.variables_storage.read().unwrap();
+    let vars_storage = &cs.witness.as_ref().unwrap();
     for (col, row) in cs.public_inputs.iter().cloned() {
-        let variable_idx = setup.variables_hint[col][row].clone() as u64;
-        let place = Place::from_variable(Variable::from_variable_index(variable_idx));
-        let value = vars_storage.get_value_unchecked(place);
+        let variable_idx = setup.variables_hint[col][row].clone() as usize;
+        let value = vars_storage.all_values[variable_idx];
         public_inputs_with_locations.push((col, row, value));
     }
     gpu_prove_from_trace::<_, TR, _, POW, _>(
