@@ -126,7 +126,7 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
 
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 20);
+        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 20);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -141,7 +141,7 @@ fn init_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO_SYNTH: b
     let builder =
         NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
 
-    let mut owned_cs = builder.build(());
+    let mut owned_cs = builder.build(1 << 25);
     // quick and dirty way of testing with private witnesses
     fn synthesize<CS: ConstraintSystem<F>>(cs: &mut CS) -> [Variable; 8] {
         use rand::{Rng, SeedableRng};
@@ -397,7 +397,7 @@ pub fn init_reusable_cs_for_sha256(
 
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, ProvingCSConfig>::new(geometry, 1 << 25, 1 << 19);
+        CsReferenceImplementationBuilder::<F, F, ProvingCSConfig>::new(geometry, 1 << 19);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -424,7 +424,7 @@ pub fn init_reusable_cs_for_sha256(
     let builder =
         NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
 
-    let mut owned_cs = builder.build(());
+    let mut owned_cs = builder.build(1 << 25);
 
     // add tables
     let table = create_tri_xor_table();
@@ -653,7 +653,7 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
 
     use boojum::cs::cs_builder_reference::*;
     let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 25, 1 << 19);
+        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 19);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -685,7 +685,7 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
     let builder =
         NopGate::configure_builder(builder, GatePlacementStrategy::UseGeneralPurposeColumns);
 
-    let mut owned_cs = builder.build(());
+    let mut owned_cs = builder.build(1 << 25);
     // add tables
     let table = create_tri_xor_table();
     owned_cs.add_lookup_table::<TriXor4Table, 4>(table);
@@ -734,7 +734,6 @@ pub fn init_cs_for_sha256<CFG: CSConfig>(
         None
     };
     let mut owned_cs = owned_cs.into_assembly();
-    owned_cs.wait_for_witness();
     let _worker = Worker::new_with_num_threads(8);
 
     (owned_cs, finalization_hint)
@@ -1149,7 +1148,7 @@ mod zksync {
         )
         .expect("gpu setup");
         let gpu_proof = {
-            let witness = proving_cs.materialize_witness_vec();
+            let witness = proving_cs.witness.as_ref().unwrap();
             let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
             gpu_prove_from_external_witness_data::<
                 _,
@@ -1206,7 +1205,7 @@ mod zksync {
         let domain_size = setup_cs.max_trace_len;
         let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
         let (mut proving_cs, _) = init_cs_for_sha256::<ProvingCSConfig>(finalization_hint.as_ref());
-        let mut witness = proving_cs.materialize_witness_vec();
+        let mut witness = proving_cs.witness.as_ref().unwrap().clone();
         let mut gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
             setup_base.clone(),
             clone_reference_tree(&setup_tree),
