@@ -87,14 +87,14 @@ impl ParentTree for Vec<Vec<[F; 4]>> {
 // This will allow us to leave gpu earlier and do fri queries on the cpu
 pub struct SubTree {
     pub parent: Rc<Vec<Vec<[F; 4]>>>,
-    pub nodes: DVec<F>,
+    pub nodes: Rc<DVec<F>>,
     pub num_leafs: usize,
     pub cap_size: usize,
     pub tree_idx: usize,
 }
 
 impl SubTree {
-    pub fn new(nodes: DVec<F>, num_leafs: usize, cap_size: usize, coset_idx: usize) -> Self {
+    pub fn new(nodes: Rc<DVec<F>>, num_leafs: usize, cap_size: usize, coset_idx: usize) -> Self {
         assert!(num_leafs.is_power_of_two());
         assert!(cap_size.is_power_of_two());
         assert_eq!(nodes.len(), 2 * num_leafs * NUM_EL_PER_HASH);
@@ -109,20 +109,6 @@ impl SubTree {
 }
 
 impl AsSingleSlice for SubTree {
-    fn domain_size(&self) -> usize {
-        self.num_leafs
-    }
-
-    fn num_polys(&self) -> usize {
-        unreachable!()
-    }
-
-    fn as_single_slice(&self) -> &[F] {
-        &self.nodes
-    }
-}
-
-impl AsSingleSlice for &SubTree {
     fn domain_size(&self) -> usize {
         self.num_leafs
     }
@@ -276,9 +262,9 @@ pub fn get_tree_cap_from_nodes(result: &[F], cap_size: usize) -> CudaResult<Vec<
 pub fn batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
     d_indexes: &DVec<u32, SmallStaticDeviceAllocator>,
     num_queries: usize,
-    d_leaf_sources: impl AsSingleSlice,
+    d_leaf_sources: &impl AsSingleSlice,
     num_cols: usize,
-    d_oracle_data: impl AsSingleSlice,
+    d_oracle_data: &impl AsSingleSlice,
     cap_size: usize,
     domain_size: usize,
     num_elems_per_leaf: usize,
@@ -310,7 +296,7 @@ pub fn batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
 pub fn batch_query_tree<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
     d_indexes: &DVec<u32, SmallStaticDeviceAllocator>,
     num_queries: usize,
-    d_oracle_data: impl AsSingleSlice,
+    d_oracle_data: &impl AsSingleSlice,
     cap_size: usize,
     domain_size: usize,
     num_elems_per_leaf: usize,
@@ -333,18 +319,17 @@ pub fn batch_query_tree<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
     let (d_indexes_ref, d_oracle_data, mut d_all_proof_elems_ref) = unsafe {
         (
             DeviceSlice::from_slice(&d_indexes),
-            DeviceSlice::from_slice(&d_oracle_data.as_single_slice()),
+            DeviceSlice::from_slice(d_oracle_data.as_single_slice()),
             DeviceSlice::from_mut_slice(&mut d_all_proofs),
         )
     };
-
-    boojum_cuda::poseidon::gather_merkle_paths(
+    if_not_dry_run!(boojum_cuda::poseidon::gather_merkle_paths(
         d_indexes_ref,
         &d_oracle_data,
         &mut d_all_proof_elems_ref,
         num_layers as u32,
         get_stream(),
-    )?;
+    ))?;
     mem::d2h(&d_all_proofs, &mut h_all_proofs[..])?;
 
     Ok(())
@@ -353,7 +338,7 @@ pub fn batch_query_tree<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
 pub fn batch_query_leaf_sources<A: GoodAllocator>(
     d_indexes: &DVec<u32, SmallStaticDeviceAllocator>,
     num_queries: usize,
-    d_leaf_sources: impl AsSingleSlice,
+    d_leaf_sources: &impl AsSingleSlice,
     num_cols: usize,
     domain_size: usize,
     num_elems_per_leaf: usize,
@@ -386,13 +371,13 @@ pub fn batch_query_leaf_sources<A: GoodAllocator>(
         )
     };
     let log_rows_per_index = num_elems_per_leaf.trailing_zeros();
-    boojum_cuda::poseidon::gather_rows(
+    if_not_dry_run!(boojum_cuda::poseidon::gather_rows(
         d_indexes_ref,
         log_rows_per_index,
         &d_leaf_sources,
         &mut d_all_leaf_elems_ref,
         get_stream(),
-    )?;
+    ))?;
     mem::d2h(&d_all_leaf_elems, &mut h_all_leaf_elems[..])?;
 
     Ok(())
@@ -410,7 +395,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_batch_query_for_leaf_sources() -> CudaResult<()> {
-        let _ctx = ProverContext::create_limited()?;
+        let _ctx = ProverContext::create()?;
         let domain_size = 1 << 16;
         let lde_degree = 2;
         let num_cols = 2;
@@ -536,7 +521,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_batch_query_for_fri_layers() -> CudaResult<()> {
-        let _ctx = ProverContext::create_limited()?;
+        let _ctx = ProverContext::create()?;
         let domain_size = 1 << 16;
         let lde_degree = 2;
         let num_cols = 2;
@@ -692,7 +677,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_batch_query_for_merkle_paths() -> CudaResult<()> {
-        let _ctx = ProverContext::create_limited()?;
+        let _ctx = ProverContext::create()?;
         let domain_size = 1 << 4;
         let lde_degree = 2;
         let num_cols = 2;

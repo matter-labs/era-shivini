@@ -54,18 +54,18 @@ pub fn constraint_evaluation(
         domain_size,
     );
 
-    let _ = boojum_cuda::gates::evaluate_gates(
-        &gates,
-        &variable_columns_matrix,
-        &witness_columns_matrix,
-        &constant_columns_matrix,
-        challenge,
-        &mut quotient_matrix,
-        challenge_power_offset as u32,
-        get_stream(),
-    )?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::gates::evaluate_gates(
+            &gates,
+            &variable_columns_matrix,
+            &witness_columns_matrix,
+            &constant_columns_matrix,
+            challenge,
+            &mut quotient_matrix,
+            challenge_power_offset as u32,
+            get_stream(),
+        ).map(|_| ())
+    }
 }
 
 #[allow(dead_code)]
@@ -106,16 +106,16 @@ pub fn constraint_evaluation_over_lde(
         lde_size,
     );
 
-    let _ = boojum_cuda::gates::evaluate_gates(
-        &gates,
-        &variable_columns_matrix,
-        &witness_columns_matrix,
-        &constant_columns_matrix,
-        challenge,
-        &mut quotient_matrix,
-        0,
-        get_stream(),
-    )?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::gates::evaluate_gates(
+            &gates,
+            &variable_columns_matrix,
+            &witness_columns_matrix,
+            &constant_columns_matrix,
+            challenge,
+            &mut quotient_matrix,
+            0,
+            get_stream(),
+        ).map(|_| ())
+    }
 }

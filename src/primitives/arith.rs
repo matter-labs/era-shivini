@@ -14,8 +14,9 @@ pub fn add_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
         let other = DeviceSlice::from_slice(other);
         (this, other)
     };
-
-    add_into_x(this, other, get_stream())
+    if_not_dry_run! {
+        add_into_x(this, other, get_stream())
+    }
 }
 
 pub fn sub_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
@@ -25,7 +26,9 @@ pub fn sub_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
         let other = DeviceSlice::from_slice(other);
         (this, other)
     };
-    sub_into_x(this, other, get_stream())
+    if_not_dry_run! {
+        sub_into_x(this, other, get_stream())
+    }
 }
 
 pub fn mul_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
@@ -35,8 +38,9 @@ pub fn mul_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
         let other = DeviceSlice::from_slice(other);
         (this, other)
     };
-
-    mul_into_x(this, other, get_stream())
+    if_not_dry_run! {
+        mul_into_x(this, other, get_stream())
+    }
 }
 
 pub fn mul_assign_complex(
@@ -66,8 +70,9 @@ pub fn mul_assign_complex(
     let other_ptr = c0_other_ptr as *const VEF;
     let other_slice: &[VEF] = unsafe { slice::from_raw_parts(other_ptr, domain_size) };
     let other_vector = unsafe { DeviceSlice::from_slice(&other_slice) };
-
-    mul_into_x(this_vector, other_vector, get_stream())
+    if_not_dry_run! {
+        mul_into_x(this_vector, other_vector, get_stream())
+    }
 }
 
 pub fn add_constant(this: &mut [F], value: &DF) -> CudaResult<()> {
@@ -77,7 +82,9 @@ pub fn add_constant(this: &mut [F], value: &DF) -> CudaResult<()> {
 
         (this, d_var)
     };
-    add_into_x(this, value, get_stream())
+    if_not_dry_run! {
+        add_into_x(this, value, get_stream())
+    }
 }
 
 pub fn sub_constant(this: &mut [F], value: &DF) -> CudaResult<()> {
@@ -87,7 +94,9 @@ pub fn sub_constant(this: &mut [F], value: &DF) -> CudaResult<()> {
 
         (this, d_var)
     };
-    sub_into_x(this, value, get_stream())
+    if_not_dry_run! {
+        sub_into_x(this, value, get_stream())
+    }
 }
 
 pub fn scale(this: &mut [F], value: &DF) -> CudaResult<()> {
@@ -97,12 +106,16 @@ pub fn scale(this: &mut [F], value: &DF) -> CudaResult<()> {
 
         (this, d_var)
     };
-    mul_into_x(this, value, get_stream())
+    if_not_dry_run! {
+        mul_into_x(this, value, get_stream())
+    }
 }
 
 pub fn inverse(values: &mut [F]) -> CudaResult<()> {
     let values_vector = unsafe { DeviceSlice::from_mut_slice(values) };
-    boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
+    }
 }
 
 pub fn inverse_ef(c0: &mut [F], c1: &mut [F]) -> CudaResult<()> {
@@ -118,13 +131,16 @@ pub fn inverse_ef(c0: &mut [F], c1: &mut [F]) -> CudaResult<()> {
     let mut values_slice: &mut [VEF] =
         unsafe { slice::from_raw_parts_mut(values_ptr, domain_size) };
     let values_vector = unsafe { DeviceSlice::from_mut_slice(&mut values_slice) };
-
-    boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::batch_inv_in_place(values_vector, get_stream())
+    }
 }
 
 pub fn negate(values: &mut [F]) -> CudaResult<()> {
     let values = unsafe { DeviceSlice::from_mut_slice(values) };
-    neg_in_place(values, get_stream())
+    if_not_dry_run! {
+        neg_in_place(values, get_stream())
+    }
 }
 
 pub fn shifted_grand_product(values: &mut [F], tmp: &mut [F]) -> CudaResult<()> {
@@ -137,14 +153,16 @@ pub fn shifted_grand_product(values: &mut [F], tmp: &mut [F]) -> CudaResult<()> 
 
         (values, tmp)
     };
-    scan_in_place(
-        ScanOperation::Product,
-        false,
-        false,
-        tmp,
-        values,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        scan_in_place(
+            ScanOperation::Product,
+            false,
+            false,
+            tmp,
+            values,
+            get_stream(),
+        )
+    }
 }
 
 pub fn complex_shifted_grand_product(c0: &mut [F], c1: &mut [F], tmp: &mut [F]) -> CudaResult<()> {
@@ -170,18 +188,20 @@ pub fn complex_shifted_grand_product(c0: &mut [F], c1: &mut [F], tmp: &mut [F]) 
         let values_tuple = DeviceSlice::from_mut_slice(&mut values_tuple[..]);
         let values_tuple = values_tuple.transmute_mut::<EF>();
 
-        boojum_cuda::extension_field::convert(values_vectorized, values_tuple, get_stream())?;
+        if_not_dry_run!(
+            boojum_cuda::extension_field::convert(values_vectorized, values_tuple, get_stream())?;
 
-        scan_in_place(
-            ScanOperation::Product,
-            false,
-            false,
-            tmp,
-            values_tuple,
-            get_stream(),
+            scan_in_place(
+                ScanOperation::Product,
+                false,
+                false,
+                tmp,
+                values_tuple,
+                get_stream(),
+            )?;
+
+            boojum_cuda::extension_field::convert(values_tuple, values_vectorized, get_stream())
         )?;
-
-        boojum_cuda::extension_field::convert(values_tuple, values_vectorized, get_stream())?;
         let values_vectorized = values_vectorized.transmute();
 
         mem::d2d(&values_vectorized.as_slice()[..domain_size], c0)?;
@@ -205,14 +225,14 @@ pub fn grand_sum(values: &[F], tmp: &mut [F]) -> CudaResult<DF> {
 
         (values, tmp)
     };
-    scan_in_place(
+    if_not_dry_run!(scan_in_place(
         ScanOperation::Sum,
         true,
         false,
         tmp,
         tmp_values_slice,
         get_stream(),
-    )?;
+    ))?;
 
     // last element is the accumulated value
     let result = tmp_values.get(domain_size - 1)?;
@@ -350,13 +370,13 @@ pub fn fold(
     };
 
     let coset_inv = coset_inv.inner.to_vec()?;
-    boojum_cuda::ops_complex::fold(
+    if_not_dry_run!(boojum_cuda::ops_complex::fold(
         coset_inv[0], // host data
         &d_challenge[0],
         values,
         result_slice,
         get_stream(),
-    )?;
+    ))?;
 
     mem::d2d(&result[..fold_size], dst_c0)?;
     mem::d2d(&result[fold_size..], dst_c1)?;
@@ -396,9 +416,9 @@ pub fn fold_flattened(src: &[F], dst: &mut [F], coset_inv: F, challenge: &DExt) 
         result.transmute_mut()
     };
 
-    boojum_cuda::ops_complex::fold(coset_inv, &d_challenge[0], values, result_ref, get_stream())?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::fold(coset_inv, &d_challenge[0], values, result_ref, get_stream())
+    }
 }
 
 #[allow(dead_code)]
@@ -461,16 +481,16 @@ pub fn precompute_barycentric_bases(
     };
 
     use boojum_cuda::barycentric::PrecomputeAtExt;
-    boojum_cuda::barycentric::precompute_lagrange_coeffs::<PrecomputeAtExt>(
-        d_point_ef_var,
-        common_factor_storage,
-        coset,
-        bases,
-        true,
-        get_stream(),
-    )?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::barycentric::precompute_lagrange_coeffs::<PrecomputeAtExt>(
+            d_point_ef_var,
+            common_factor_storage,
+            coset,
+            bases,
+            true,
+            get_stream(),
+        )
+    }
 }
 
 pub fn barycentric_evaluate_base_at_ext<A: GoodAllocator>(
@@ -552,14 +572,14 @@ fn barycentric_evaluate<E: boojum_cuda::barycentric::EvalImpl, A: GoodAllocator>
     let mut evals: SVec<E::X> = svec!(num_polys);
     let evals_ref = unsafe { DeviceSlice::from_mut_slice(&mut evals) };
 
-    boojum_cuda::barycentric::batch_eval::<E>(
+    if_not_dry_run!(boojum_cuda::barycentric::batch_eval::<E>(
         &values_matrix,
         bases,
         &mut temp_storage_partial_reduce,
         temp_storage_final_cub_reduce,
         evals_ref,
         get_stream(),
-    )?;
+    ))?;
 
     let result = evals.to_vec_in(A::default())?;
 
@@ -634,28 +654,30 @@ pub fn partial_products_num_denom_chunk<'a>(
     let gamma_c0 = unsafe { DeviceVariable::from_ref(&gamma.c0.inner[0]) };
     let gamma_c1 = unsafe { DeviceVariable::from_ref(&gamma.c1.inner[0]) };
 
-    boojum_cuda::ops_complex::partial_products_f_g_chunk(
-        num_vector,
-        denom_vector,
-        &variable_cols_matrix,
-        &sigma_cols_matrix,
-        omega_values_vector,
-        non_residues_by_beta_vector,
-        beta_c0,
-        beta_c1,
-        gamma_c0,
-        gamma_c1,
-        num_cols_per_product,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::partial_products_f_g_chunk(
+            num_vector,
+            denom_vector,
+            &variable_cols_matrix,
+            &sigma_cols_matrix,
+            omega_values_vector,
+            non_residues_by_beta_vector,
+            beta_c0,
+            beta_c1,
+            gamma_c0,
+            gamma_c1,
+            num_cols_per_product,
+            get_stream(),
+        )
+    }
 }
 
 // TODO: Rework to accept slices
 pub fn partial_products_quotient_terms<'a, 'b>(
     partial_products: &'a [ComplexPoly<'a, CosetEvaluations>],
     z_poly: &'a ComplexPoly<'a, CosetEvaluations>,
-    variable_cols: &Vec<Poly<'a, CosetEvaluations>>,
-    sigma_cols: &Vec<Poly<'a, CosetEvaluations>>,
+    variable_cols: &[Poly<'a, CosetEvaluations>],
+    sigma_cols: &[Poly<'a, CosetEvaluations>],
     omega_values: &'a Poly<'a, CosetEvaluations>,
     powers_of_alpha: &[EF],
     non_residues_by_beta: &[EF],
@@ -737,22 +759,24 @@ pub fn partial_products_quotient_terms<'a, 'b>(
         unsafe { slice::from_raw_parts_mut(quotient_ptr, domain_size) };
     let quotient_vector = unsafe { DeviceSlice::from_mut_slice(&mut quotient_slice) };
 
-    boojum_cuda::ops_complex::partial_products_quotient_terms(
-        &partial_products_matrix,
-        z_poly_vector,
-        &variable_cols_matrix,
-        &sigma_cols_matrix,
-        omega_values_vector,
-        powers_of_alpha_vector,
-        non_residues_by_beta_vector,
-        beta_c0,
-        beta_c1,
-        gamma_c0,
-        gamma_c1,
-        quotient_vector,
-        num_cols_per_product,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::partial_products_quotient_terms(
+            &partial_products_matrix,
+            z_poly_vector,
+            &variable_cols_matrix,
+            &sigma_cols_matrix,
+            omega_values_vector,
+            powers_of_alpha_vector,
+            non_residues_by_beta_vector,
+            beta_c0,
+            beta_c1,
+            gamma_c0,
+            gamma_c1,
+            quotient_vector,
+            num_cols_per_product,
+            get_stream(),
+        )
+    }
 }
 
 // TODO: Rework to accept slices
@@ -796,15 +820,17 @@ pub fn lookup_aggregated_table_values<'a>(
     let aggregated_table_values_vector =
         unsafe { DeviceSlice::from_mut_slice(&mut aggregated_table_values_slice) };
 
-    boojum_cuda::ops_complex::lookup_aggregated_table_values(
-        &table_cols_matrix,
-        beta_c0,
-        beta_c1,
-        powers_of_gamma_vector,
-        aggregated_table_values_vector,
-        num_polys,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::lookup_aggregated_table_values(
+            &table_cols_matrix,
+            beta_c0,
+            beta_c1,
+            powers_of_gamma_vector,
+            aggregated_table_values_vector,
+            num_polys,
+            get_stream(),
+        )
+    }
 }
 
 // TODO: Rework to accept slices
@@ -885,19 +911,21 @@ pub fn lookup_subargs<'a>(
         unsafe { DeviceSlice::from_slice(multiplicity_cols_slice) };
     let multiplicity_cols_matrix = DeviceMatrix::new(multiplicity_cols_device_slice, domain_size);
 
-    boojum_cuda::ops_complex::lookup_subargs_a_and_b(
-        &variable_cols_matrix,
-        &mut subargs_a_matrix,
-        &mut subargs_b_matrix,
-        beta_c0,
-        beta_c1,
-        powers_of_gamma_vector,
-        table_id_col_vector,
-        aggregated_table_values_inv_vector,
-        &multiplicity_cols_matrix,
-        num_cols_per_subarg,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::lookup_subargs_a_and_b(
+            &variable_cols_matrix,
+            &mut subargs_a_matrix,
+            &mut subargs_b_matrix,
+            beta_c0,
+            beta_c1,
+            powers_of_gamma_vector,
+            table_id_col_vector,
+            aggregated_table_values_inv_vector,
+            &multiplicity_cols_matrix,
+            num_cols_per_subarg,
+            get_stream(),
+        )
+    }
 }
 
 // TODO: Rework to accept slices
@@ -989,21 +1017,23 @@ pub fn lookup_quotient_ensure_a_and_b_are_well_formed<'a, 'b>(
         unsafe { slice::from_raw_parts_mut(quotient_ptr, domain_size) };
     let quotient_vector = unsafe { DeviceSlice::from_mut_slice(&mut quotient_slice) };
 
-    boojum_cuda::ops_complex::lookup_quotient_a_and_b(
-        &variable_cols_matrix,
-        &table_cols_matrix,
-        &subargs_a_matrix,
-        &subargs_b_matrix,
-        beta_c0,
-        beta_c1,
-        powers_of_gamma_vector,
-        powers_of_alpha_vector,
-        table_id_col_vector,
-        &multiplicity_cols_matrix,
-        quotient_vector,
-        num_cols_per_subarg,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::lookup_quotient_a_and_b(
+            &variable_cols_matrix,
+            &table_cols_matrix,
+            &subargs_a_matrix,
+            &subargs_b_matrix,
+            beta_c0,
+            beta_c1,
+            powers_of_gamma_vector,
+            powers_of_alpha_vector,
+            table_id_col_vector,
+            &multiplicity_cols_matrix,
+            quotient_vector,
+            num_cols_per_subarg,
+            get_stream(),
+        )
+    }
 }
 
 pub fn deep_quotient_except_public_inputs<'a, 'b>(
@@ -1020,7 +1050,7 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
     quotient_constraint_polys: &[ComplexPoly<'a, CosetEvaluations>],
     evaluations_at_z: &[EF],
     evaluations_at_z_omega: &[EF],
-    evaluations_at_zero: &Option<DVec<EF>>,
+    evaluations_at_zero: &Option<SVec<EF>>,
     challenges: &[EF],
     denom_at_z: &ComplexPoly<'a, CosetEvaluations>,
     denom_at_z_omega: &ComplexPoly<'a, CosetEvaluations>,
@@ -1266,28 +1296,30 @@ pub fn deep_quotient_except_public_inputs<'a, 'b>(
         unsafe { slice::from_raw_parts_mut(quotient_ptr, domain_size) };
     let quotient_vector = unsafe { DeviceSlice::from_mut_slice(&mut quotient_slice) };
 
-    boojum_cuda::ops_complex::deep_quotient_except_public_inputs(
-        &variable_cols_matrix,
-        &witness_cols_matrix,
-        &constant_cols_matrix,
-        &permutation_cols_matrix,
-        z_poly_vector,
-        &partial_products_matrix,
-        &multiplicity_cols_matrix,
-        &lookup_a_polys_matrix,
-        &lookup_b_polys_matrix,
-        &table_cols_matrix,
-        &quotient_constraint_polys_matrix,
-        evaluations_at_z_vector,
-        evaluations_at_z_omega_vector,
-        evaluations_at_zero_vector,
-        challenges_vector,
-        denom_at_z_vector,
-        denom_at_z_omega_vector,
-        denom_at_zero_vector,
-        quotient_vector,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::deep_quotient_except_public_inputs(
+            &variable_cols_matrix,
+            &witness_cols_matrix,
+            &constant_cols_matrix,
+            &permutation_cols_matrix,
+            z_poly_vector,
+            &partial_products_matrix,
+            &multiplicity_cols_matrix,
+            &lookup_a_polys_matrix,
+            &lookup_b_polys_matrix,
+            &table_cols_matrix,
+            &quotient_constraint_polys_matrix,
+            evaluations_at_z_vector,
+            evaluations_at_z_omega_vector,
+            evaluations_at_zero_vector,
+            challenges_vector,
+            denom_at_z_vector,
+            denom_at_z_omega_vector,
+            denom_at_zero_vector,
+            quotient_vector,
+            get_stream(),
+        )
+    }
 }
 
 pub fn deep_quotient_public_input<'a, 'b>(
@@ -1322,11 +1354,13 @@ pub fn deep_quotient_public_input<'a, 'b>(
         unsafe { slice::from_raw_parts_mut(quotient_ptr, domain_size) };
     let quotient_vector = unsafe { DeviceSlice::from_mut_slice(&mut quotient_slice) };
 
-    boojum_cuda::ops_complex::deep_quotient_public_input(
-        values_vector,
-        expected_value,
-        challenge_vector,
-        quotient_vector,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::deep_quotient_public_input(
+            values_vector,
+            expected_value,
+            challenge_vector,
+            quotient_vector,
+            get_stream(),
+        )
+    }
 }

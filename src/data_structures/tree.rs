@@ -58,6 +58,7 @@ impl TreeCache {
         self.get(OracleType::Trace)
     }
 
+    #[allow(dead_code)]
     pub fn get_trace_subtree(&self, coset_idx: usize) -> &SubTree {
         self.get_coset_subtree(OracleType::Trace, coset_idx)
     }
@@ -75,6 +76,7 @@ impl TreeCache {
         self.get(OracleType::Argument)
     }
 
+    #[allow(dead_code)]
     pub fn get_argument_subtree(&self, coset_idx: usize) -> &SubTree {
         self.get_coset_subtree(OracleType::Argument, coset_idx)
     }
@@ -97,6 +99,7 @@ impl TreeCache {
         self.get(OracleType::Setup)
     }
 
+    #[allow(dead_code)]
     pub fn get_setup_subtree(&self, coset_idx: usize) -> &SubTree {
         self.get_coset_subtree(OracleType::Setup, coset_idx)
     }

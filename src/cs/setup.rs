@@ -54,7 +54,7 @@ pub fn transform_indexes_on_device<A: GoodAllocator, T>(
 
     let mut transformed_hints = Vec::with_capacity(num_cols);
     for col in variables_hint.iter() {
-        assert!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK != 0);
+        assert_ne!(col.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
         let mut new = Vec::with_capacity_in(col.len(), A::default());
         unsafe { new.set_len(col.len()) }
         transformed_hints.push(new);
@@ -83,8 +83,11 @@ pub fn transform_indexes_on_device<A: GoodAllocator, T>(
             DeviceSlice::from_mut_slice(&mut transformed_variables[..]),
         )
     };
-
-    pack_variable_indexes(d_variables, d_variables_transformed, get_stream())?;
+    if_not_dry_run!(pack_variable_indexes(
+        d_variables,
+        d_variables_transformed,
+        get_stream()
+    ))?;
 
     let mut start = 0;
     for dst in transformed_hints.iter_mut() {
@@ -243,7 +246,6 @@ pub fn calculate_tmp_buffer_size(
 ) -> CudaResult<usize> {
     let tmp_storage_size_in_bytes =
         boojum_cuda::ops_complex::get_generate_permutation_matrix_temp_storage_bytes(num_cells)?;
-
     let mut num_blocks_for_tmp_storage = tmp_storage_size_in_bytes / block_size_in_bytes;
     if tmp_storage_size_in_bytes % block_size_in_bytes != 0 {
         num_blocks_for_tmp_storage += 1;
@@ -257,6 +259,9 @@ fn materialize_non_residues(
     num_cols: usize,
     domain_size: usize,
 ) -> CudaResult<DVec<F, SmallStaticDeviceAllocator>> {
+    if is_dry_run()? {
+        return Ok(svec!(num_cols));
+    }
     let mut non_residues = Vec::with_capacity(num_cols);
     non_residues.push(F::ONE);
     non_residues.extend_from_slice(&make_non_residues::<F>(num_cols - 1, domain_size));
@@ -266,62 +271,43 @@ fn materialize_non_residues(
     Ok(d_non_residues)
 }
 
-pub fn materialize_permutation_cols_from_transformed_hints_into<'a, A: GoodAllocator>(
+pub fn materialize_permutation_cols_from_indexes_into(
     d_result: &mut [F],
-    variables_hint: &Vec<Vec<u32, A>>, // TODO: reuse variables from variable assignment
+    variables_indexes: &DVec<u32>,
+    num_cols: usize,
     domain_size: usize,
 ) -> CudaResult<()> {
-    assert!(variables_hint.is_empty() == false);
+    assert!(!variables_indexes.is_empty());
     assert!(domain_size.is_power_of_two());
 
-    let num_cols = variables_hint.len();
-    let num_cells = num_cols * domain_size;
+    let num_cells = variables_indexes.len();
     assert_eq!(d_result.len(), num_cells);
-
+    assert_eq!(num_cols * domain_size, num_cells);
     let alloc = _alloc().clone();
     // FIXME: although it fails with actual number of bytes, it works with padded value
     let tmp_storage_size_in_bytes =
         calculate_tmp_buffer_size(num_cells, alloc.block_size_in_bytes())?;
 
     let mut d_tmp_storage: DVec<u8> = dvec!(tmp_storage_size_in_bytes);
-    let mut d_variables_transformed =
-        DVec::<u32, StaticDeviceAllocator>::with_capacity_in(num_cells, alloc);
 
-    // this is a transfer between different shape buffers
-    // we have avoided to flatten source values whereas destination is already flattened
-    let mut d_bitmask = dvec!(1);
-    mem::h2d(&[PACKED_PLACEHOLDER_BITMASK], &mut d_bitmask)?;
-    let d_bitmask = &d_bitmask[0];
-    for (src, dst) in variables_hint
-        .iter()
-        .zip(d_variables_transformed.chunks_mut(domain_size))
-    {
-        assert_eq!(src.len() as u32 & PACKED_PLACEHOLDER_BITMASK, 0);
-        let (actual, padding) = dst.split_at_mut(src.len());
-        mem::h2d(src, actual)?;
-        // don't forget to mark padding space as placeholder
-        if padding.is_empty() == false {
-            helpers::set_value_generic(padding, &d_bitmask)?;
-        }
-    }
     let d_non_residues = materialize_non_residues(num_cols, domain_size)?;
 
     assert_eq!(d_result.len(), num_cells);
     let (d_variables_transformed, d_tmp_storage, d_result_ref, d_non_residues) = unsafe {
         (
-            DeviceSlice::from_mut_slice(&mut d_variables_transformed[..]),
+            DeviceSlice::from_slice(&variables_indexes[..]),
             DeviceSlice::from_mut_slice(&mut d_tmp_storage[..]),
             DeviceSlice::from_mut_slice(&mut d_result[..]),
             DeviceSlice::from_slice(&d_non_residues[..]),
         )
     };
-    boojum_cuda::ops_complex::generate_permutation_matrix(
-        d_tmp_storage,
-        d_variables_transformed,
-        d_non_residues,
-        d_result_ref,
-        get_stream(),
-    )?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::generate_permutation_matrix(
+            d_tmp_storage,
+            d_variables_transformed,
+            d_non_residues,
+            d_result_ref,
+            get_stream(),
+        )
+    }
 }

@@ -191,23 +191,18 @@ pub fn multi_polys_as_single_slice_mut<'a, P: PolyForm>(polys: &mut [Poly<'a, P>
 }
 
 // Accumulates into quotient
-pub fn generic_evaluate_constraints_by_coset<'a, 'b>(
-    trace_polys: &TracePolynomials<'a, CosetEvaluations>,
-    setup_polys: &SetupPolynomials<'a, CosetEvaluations>,
-    gates: &[cs_helpers::GateEvaluationParams],
+pub fn generic_evaluate_constraints_by_coset(
+    variable_cols: &[Poly<CosetEvaluations>],
+    witness_cols: &[Poly<CosetEvaluations>],
+    constant_cols: &[Poly<CosetEvaluations>],
+    gates: &[GateEvaluationParams],
     _selectors_placement: TreeNode,
     domain_size: usize,
     challenge: EF,
     challenge_power_offset: usize,
-    quotient: &mut ComplexPoly<'b, CosetEvaluations>,
-) -> CudaResult<()>
-where
-    'a: 'b,
-{
-    assert_eq!(
-        trace_polys.variable_cols[0].domain_size(),
-        quotient.domain_size()
-    );
+    quotient: &mut ComplexPoly<CosetEvaluations>,
+) -> CudaResult<()> {
+    assert_eq!(variable_cols[0].domain_size(), quotient.domain_size());
 
     let quotient_as_single_slice = unsafe {
         assert_eq!(
@@ -217,12 +212,6 @@ where
         let len = 2 * quotient.domain_size();
         std::slice::from_raw_parts_mut(quotient.c0.storage.as_mut().as_mut_ptr(), len)
     };
-    let TracePolynomials {
-        variable_cols,
-        witness_cols,
-        multiplicity_cols: _,
-    } = trace_polys;
-    let SetupPolynomials { constant_cols, .. } = setup_polys;
 
     let all_variable_cols = multi_polys_as_single_slice(&variable_cols);
     let all_witness_cols = multi_polys_as_single_slice(&witness_cols);
