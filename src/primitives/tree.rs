@@ -29,8 +29,10 @@ pub fn build_tree(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) const POSEIDON_RATE: usize = 8;
 
+#[allow(dead_code)]
 pub fn build_leaves_from_chunk(
     leaf_sources: &[F],
     result: &mut [F],
@@ -56,6 +58,7 @@ pub fn build_leaves_from_chunk(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn build_tree_nodes(
     leaf_hashes: &[F],
     result: &mut [F],

@@ -144,52 +144,6 @@ impl CircuitWrapper {
     }
 }
 
-pub fn synth_base_circuit_for_setup(
-    circuit: ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>,
-) -> (
-    CSReferenceAssembly<F, P, SetupCSConfig>,
-    FinalizationHintsForProver,
-) {
-    let (cs, some_finalization_hint) =
-        init_or_synthesize_assembly::<_, true>(CircuitWrapper::Base(circuit), None);
-    assert!(cs.next_available_place_idx() > 0);
-    (cs, some_finalization_hint.expect("finalization hint"))
-}
-
-pub fn synth_recursive_circuit_for_setup(
-    circuit: ZkSyncRecursiveLayerCircuit,
-) -> (
-    CSReferenceAssembly<F, P, SetupCSConfig>,
-    FinalizationHintsForProver,
-) {
-    let (cs, some_finalization_hint) =
-        init_or_synthesize_assembly::<_, true>(CircuitWrapper::Recursive(circuit), None);
-    assert!(cs.next_available_place_idx() > 0);
-    (cs, some_finalization_hint.expect("finalization hint"))
-}
-
-pub fn synth_base_circuit_for_proving(
-    circuit: ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>,
-    hint: &FinalizationHintsForProver,
-) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
-    let (cs, some_finalization_hint) =
-        init_or_synthesize_assembly::<_, true>(CircuitWrapper::Base(circuit), Some(hint));
-    assert!(cs.next_available_place_idx() > 0);
-    assert!(some_finalization_hint.is_none());
-    cs
-}
-
-pub fn synth_recursive_circuit_for_proving(
-    circuit: ZkSyncRecursiveLayerCircuit,
-    hint: &FinalizationHintsForProver,
-) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
-    let (cs, some_finalization_hint) =
-        init_or_synthesize_assembly::<_, true>(CircuitWrapper::Recursive(circuit), Some(hint));
-    assert!(cs.next_available_place_idx() > 0);
-    assert!(some_finalization_hint.is_none());
-    cs
-}
-
 #[allow(dead_code)]
 pub(crate) fn synth_circuit_for_setup(
     circuit: CircuitWrapper,
@@ -213,21 +167,7 @@ pub(crate) fn synth_circuit_for_proving(
     cs
 }
 
-#[allow(dead_code)]
-pub(crate) fn init_cs_for_external_proving_without_hint(
-    circuit: CircuitWrapper,
-) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
-    let (_, some_finalization_hint) =
-        init_or_synthesize_assembly::<SetupCSConfig, true>(circuit.clone(), None);
-    assert!(some_finalization_hint.is_some());
-    let (cs, _) = init_or_synthesize_assembly::<ProvingCSConfig, false>(
-        circuit,
-        some_finalization_hint.as_ref(),
-    );
-    assert_eq!(cs.next_available_place_idx(), 0);
-    cs
-}
-
+// called by zksync-era
 pub fn init_base_layer_cs_for_repeated_proving(
     circuit: ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>,
     hint: &FinalizationHintsForProver,
@@ -235,6 +175,7 @@ pub fn init_base_layer_cs_for_repeated_proving(
     init_cs_for_external_proving(CircuitWrapper::Base(circuit), hint)
 }
 
+// called by zksync-era
 pub fn init_recursive_layer_cs_for_repeated_proving(
     circuit: ZkSyncRecursiveLayerCircuit,
     hint: &FinalizationHintsForProver,
@@ -252,8 +193,13 @@ pub(crate) fn init_cs_for_external_proving(
     cs
 }
 
-// this function doesn't work DevCSConfig!
-pub(crate) fn init_or_synthesize_assembly<CFG: CSConfig, const DO_SYNTH: bool>(
+// in init_or_synthesize_assembly, we expect CFG to be either
+// ProvingCSConfig or SetupCSConfig
+pub trait AllowInitOrSynthesize: CSConfig {}
+impl AllowInitOrSynthesize for ProvingCSConfig {}
+impl AllowInitOrSynthesize for SetupCSConfig {}
+
+pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_SYNTH: bool>(
     circuit: CircuitWrapper,
     finalization_hint: Option<&FinalizationHintsForProver>,
 ) -> (

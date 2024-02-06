@@ -1,4 +1,4 @@
-use std::{alloc::Global, sync::atomic::AtomicU32};
+use std::alloc::Global;
 
 use boojum::{
     config::ProvingCSConfig,
@@ -18,7 +18,7 @@ use boojum::{
         },
         oracle::TreeHasher,
         traits::{gate::GatePlacementStrategy, GoodAllocator},
-        LookupParameters, Place, Variable, Witness,
+        LookupParameters,
     },
     field::U64Representable,
     worker::Worker,
@@ -48,13 +48,11 @@ pub fn gpu_prove_from_external_witness_data<
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
 ) -> CudaResult<GpuProof<A>> {
-    // TODO: this is a convenient function that is made for externally synthesized circuits
-    // but local synthesis also use this fn. re-enable this check once deployments are done
-    // assert_eq!(
-    //     cs.next_available_place_idx(),
-    //     0,
-    //     "CS should be empty and hold no data"
-    // );
+    assert_eq!(
+        cs.next_available_place_idx(),
+        0,
+        "CS should be a reusable cs (empty and holding no data)"
+    );
     unsafe {
         assert!(
             _CUDA_CONTEXT.is_some(),
@@ -108,214 +106,6 @@ pub fn gpu_prove_from_external_witness_data<
     }
     gpu_prove_from_trace::<_, TR, _, NoPow, _>(
         cs,
-        raw_trace,
-        monomial_trace,
-        subtrees,
-        trace_tree_cap,
-        public_inputs_with_locations,
-        setup,
-        proof_config,
-        vk,
-        transcript_params,
-        worker,
-    )
-}
-// allocate both hints and result through same allocator
-pub fn materialize_variable_cols_from_hints<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    A: GoodAllocator,
->(
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
-    hints: &[Vec<u32, A>],
-    worker: &Worker,
-) -> Vec<Vec<F, A>> {
-    let domain_size = cs.max_trace_len;
-    assert!(domain_size.is_power_of_two());
-    let num_cols = hints.len();
-    // assume that dag is resolved;
-    use boojum::dag::WitnessSource;
-    let vars_storage = &cs.witness.as_ref().unwrap();
-    // assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
-
-    let mut result: Vec<_> = (0..num_cols)
-        .map(|_| {
-            let mut col = Vec::with_capacity_in(domain_size, A::default());
-            col.resize(domain_size, F::ZERO);
-            col
-        })
-        .collect();
-    worker.scope(result.len(), |scope, chunk_size| {
-        for (vars_chunk, polys_chunk) in hints.chunks(chunk_size).zip(result.chunks_mut(chunk_size))
-        {
-            scope.spawn(move |_| {
-                debug_assert_eq!(vars_chunk.len(), polys_chunk.len());
-                for (vars_column, poly) in vars_chunk.iter().zip(polys_chunk.iter_mut()) {
-                    unsafe {
-                        poly.set_len(domain_size);
-                    }
-                    for (var, dst) in vars_column.iter().zip(poly.iter_mut()) {
-                        if var & PACKED_PLACEHOLDER_BITMASK == 0 {
-                            let place =
-                                Place::from_variable(Variable::from_variable_index(*var as u64));
-                            *dst = vars_storage.all_values[*var as usize];
-                        } else {
-                            // we can use 0 as a substitue for all undefined variables,
-                            // or add ZK into them
-                        }
-                    }
-                }
-            });
-        }
-    });
-    result
-}
-
-pub fn materialzie_witness_cols_from_hints<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    A: GoodAllocator,
->(
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
-    hints: &[Vec<u32, A>],
-    worker: &Worker,
-) -> Vec<Vec<F, A>> {
-    let domain_size = cs.max_trace_len;
-    assert!(domain_size.is_power_of_two());
-    // assume that dag is resolved;
-    use boojum::dag::WitnessSource;
-    let vars_storage = &cs.witness.as_ref().unwrap();
-    // assert!(vars_storage.try_get_value(Place::placeholder()).is_some());
-    let num_cols = hints.len();
-    let mut result: Vec<_> = (0..num_cols)
-        .map(|_| {
-            let mut col = Vec::with_capacity_in(domain_size, A::default());
-            col.resize(domain_size, F::ZERO); // TODO: unsafe set_len?
-            col
-        })
-        .collect();
-    worker.scope(result.len(), |scope, chunk_size| {
-        for (vars_chunk, polys_chunk) in hints.chunks(chunk_size).zip(result.chunks_mut(chunk_size))
-        {
-            scope.spawn(move |_| {
-                debug_assert_eq!(vars_chunk.len(), polys_chunk.len());
-                for (vars_column, poly) in vars_chunk.iter().zip(polys_chunk.iter_mut()) {
-                    unsafe {
-                        poly.set_len(domain_size);
-                    }
-                    for (var, dst) in vars_column.iter().zip(poly.iter_mut()) {
-                        if var & PACKED_PLACEHOLDER_BITMASK == 0 {
-                            let place =
-                                Place::from_witness(Witness::from_witness_index(*var as u64));
-                            *dst = vars_storage.all_values[*var as usize];
-                        } else {
-                            // we can use 0 as a substitue for all undefined variables,
-                            // or add ZK into them
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    result
-}
-
-pub fn materialize_multiplicities_polynomials<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    A: GoodAllocator,
->(
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
-    worker: &Worker,
-) -> Vec<Vec<F, A>> {
-    if cs.lookup_parameters == LookupParameters::NoLookup {
-        return vec![];
-    }
-    let domain_size = cs.max_trace_len;
-    assert!(domain_size.is_power_of_two());
-    let flattening_iter = cs.lookup_multiplicities.iter().flat_map(|el| el.iter());
-    let mut result: Vec<_> = (0..cs.num_multipicities_polys())
-        .map(|_| {
-            let mut col = Vec::with_capacity_in(domain_size, A::default());
-            col.resize(domain_size, F::ZERO);
-            col
-        })
-        .collect();
-    for (idx, dst) in result.iter_mut().enumerate() {
-        let num_to_skip = idx * cs.max_trace_len;
-        let src_it = flattening_iter.clone().skip(num_to_skip);
-
-        worker.scope(dst.len(), |scope, chunk_size| {
-            for (idx, dst) in dst.chunks_mut(chunk_size).enumerate() {
-                let src = src_it.clone().skip(idx * chunk_size);
-                scope.spawn(move |_| {
-                    for (dst, src) in dst.iter_mut().zip(src) {
-                        *dst = F::from_u64_unchecked(AtomicU32::load(
-                            src,
-                            std::sync::atomic::Ordering::SeqCst,
-                        ) as u64);
-                    }
-                });
-            }
-        });
-    }
-
-    result
-}
-
-pub fn gpu_prove<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    TR: Transcript<F, CompatibleCap = [F; 4]>,
-    H: TreeHasher<F, Output = TR::CompatibleCap>,
-    POW: PoWRunner,
-    A: GoodAllocator,
->(
-    cs: &mut CSReferenceAssembly<F, P, ProvingCSConfig>,
-    proof_config: ProofConfig,
-    setup: &GpuSetup<A>,
-    vk: &VerificationKey<F, H>,
-    transcript_params: TR::TransciptParameters,
-    worker: &Worker,
-) -> CudaResult<GpuProof<A>> {
-    unsafe {
-        assert!(
-            _CUDA_CONTEXT.is_some(),
-            "prover context should be initialized"
-        )
-    };
-
-    let time = std::time::Instant::now();
-    assert!(cs.next_available_place_idx() > 0, "CS shouldn't be empty");
-    let domain_size = cs.max_trace_len;
-    assert!(domain_size.is_power_of_two());
-    let h_variables_cols = materialize_variable_cols_from_hints(&cs, &setup.variables_hint, worker);
-    let h_witnesses_cols = materialzie_witness_cols_from_hints(&cs, &setup.witnesses_hint, worker);
-    let h_multiplicities = materialize_multiplicities_polynomials(&cs, worker);
-    println!(
-        "materialization of {} trace cols are done on host in {:?} with {} cores",
-        h_variables_cols.len() + h_witnesses_cols.len() + h_multiplicities.len(),
-        time.elapsed(),
-        worker.num_cores
-    );
-    let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
-    let used_lde_degree = std::cmp::max(proof_config.fri_lde_factor, quotient_degree);
-    let (raw_trace, monomial_trace, subtrees, trace_tree_cap) =
-        construct_trace_storage_from_local_witness_data(
-            h_variables_cols,
-            h_witnesses_cols,
-            h_multiplicities,
-            used_lde_degree,
-            domain_size,
-            &proof_config,
-        )?;
-    let num_public_inputs = cs.public_inputs.len();
-    let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
-    let vars_storage = &cs.witness.as_ref().unwrap();
-    for (col, row) in cs.public_inputs.iter().cloned() {
-        let variable_idx = setup.variables_hint[col][row].clone() as usize;
-        let value = vars_storage.all_values[variable_idx];
-        public_inputs_with_locations.push((col, row, value));
-    }
-    gpu_prove_from_trace::<_, TR, _, POW, _>(
-        &cs,
         raw_trace,
         monomial_trace,
         subtrees,
