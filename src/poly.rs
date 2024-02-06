@@ -18,6 +18,10 @@ impl PolyForm for MonomialBasis {}
 pub struct CosetEvaluations;
 impl PolyForm for CosetEvaluations {}
 
+#[derive(Debug, Clone)]
+pub struct Undefined;
+impl PolyForm for Undefined {}
+
 pub(crate) struct PrecomputedBasisForBarycentric {
     pub(crate) bases: DVec<F>,
 }
@@ -55,6 +59,7 @@ pub(crate) fn batch_barycentric_evaluate_ext<S: AsSingleSlice, A: GoodAllocator>
 #[derive(Debug)]
 pub enum PolyStorage<'a> {
     Borrowed(&'a [F]),
+    BorrowedMut(&'a mut [F]),
     Owned(DVec<F>),
 }
 
@@ -62,15 +67,17 @@ impl<'a> AsRef<[F]> for PolyStorage<'a> {
     fn as_ref(&self) -> &[F] {
         match self {
             PolyStorage::Borrowed(inner) => *inner,
-            PolyStorage::Owned(ref inner) => inner,
+            PolyStorage::BorrowedMut(inner) => *inner,
+            PolyStorage::Owned(inner) => inner,
         }
     }
 }
 impl<'a> AsMut<[F]> for PolyStorage<'a> {
     fn as_mut(&mut self) -> &mut [F] {
         match self {
-            PolyStorage::Borrowed(_inner) => unimplemented!(),
-            PolyStorage::Owned(ref mut inner) => inner,
+            PolyStorage::Borrowed(_) => unimplemented!(),
+            PolyStorage::BorrowedMut(inner) => *inner,
+            PolyStorage::Owned(inner) => inner,
         }
     }
 }
@@ -79,13 +86,15 @@ impl<'a> PolyStorage<'a> {
     pub fn len(&self) -> usize {
         match self {
             PolyStorage::Borrowed(inner) => inner.len(),
-            PolyStorage::Owned(ref inner) => inner.len(),
+            PolyStorage::BorrowedMut(inner) => inner.len(),
+            PolyStorage::Owned(inner) => inner.len(),
         }
     }
 
     pub fn into_inner(self) -> DVec<F> {
         match self {
             PolyStorage::Borrowed(_) => unimplemented!(),
+            PolyStorage::BorrowedMut(_) => unimplemented!(),
             PolyStorage::Owned(inner) => inner,
         }
     }
@@ -94,6 +103,7 @@ impl<'a> PolyStorage<'a> {
     pub fn copy_from_device_slice(&mut self, other: &[F]) -> CudaResult<()> {
         match self {
             PolyStorage::Borrowed(_) => unimplemented!(),
+            PolyStorage::BorrowedMut(_) => unimplemented!(),
             PolyStorage::Owned(inner) => {
                 mem::d2d(other, inner)?;
             }
@@ -109,6 +119,9 @@ impl<'a> PolyStorage<'a> {
             PolyStorage::Borrowed(inner) => {
                 mem::d2h(&inner[pos..pos + 1], &mut h_values)?;
             }
+            PolyStorage::BorrowedMut(inner) => {
+                mem::d2h(&inner[pos..pos + 1], &mut h_values)?;
+            }
             PolyStorage::Owned(inner) => {
                 mem::d2h(&inner[pos..pos + 1], &mut h_values)?;
             }
@@ -122,16 +135,21 @@ impl<'a> Clone for PolyStorage<'a> {
         let domain_size = self.len();
         assert!(domain_size.is_power_of_two());
         let mut new = dvec!(domain_size);
-        match self {
-            PolyStorage::Borrowed(inner) => {
-                // TODO: shallow or deep copy?
-                mem::d2d(inner, &mut new).expect("clone");
-            }
-            PolyStorage::Owned(inner) => {
-                mem::d2d(inner, &mut new).expect("clone");
-            }
-        };
-
+        if !is_dry_run().unwrap_or(true) {
+            match self {
+                PolyStorage::Borrowed(inner) => {
+                    // TODO: shallow or deep copy?
+                    mem::d2d(inner, &mut new).expect("clone");
+                }
+                PolyStorage::BorrowedMut(inner) => {
+                    // TODO: shallow or deep copy?
+                    mem::d2d(inner, &mut new).expect("clone");
+                }
+                PolyStorage::Owned(inner) => {
+                    mem::d2d(inner, &mut new).expect("clone");
+                }
+            };
+        }
         PolyStorage::Owned(new)
     }
 }
@@ -146,6 +164,7 @@ impl<'a, P: PolyForm> Poly<'a, P> {
     pub fn is_owned(&self) -> bool {
         match self.storage {
             PolyStorage::Borrowed(_) => false,
+            PolyStorage::BorrowedMut(_) => false,
             PolyStorage::Owned(_) => true,
         }
     }
@@ -230,19 +249,28 @@ impl<'a, P: PolyForm> AsSingleSlice for ComplexPoly<'a, P> {
     }
 }
 
-impl<'a, P: PolyForm> From<DVec<F>> for Poly<'a, P> {
-    fn from(values: DVec<F>) -> Self {
+impl<'a, P: PolyForm> From<&'a [F]> for Poly<'a, P> {
+    fn from(values: &'a [F]) -> Self {
         Poly {
-            storage: PolyStorage::Owned(values),
+            storage: PolyStorage::Borrowed(values),
             marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<'a, P: PolyForm> From<&'a [F]> for Poly<'a, P> {
-    fn from(values: &'a [F]) -> Self {
+impl<'a, P: PolyForm> From<&'a mut [F]> for Poly<'a, P> {
+    fn from(values: &'a mut [F]) -> Self {
         Poly {
-            storage: PolyStorage::Borrowed(values),
+            storage: PolyStorage::BorrowedMut(values),
+            marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, P: PolyForm> From<DVec<F>> for Poly<'a, P> {
+    fn from(values: DVec<F>) -> Self {
+        Poly {
+            storage: PolyStorage::Owned(values),
             marker: std::marker::PhantomData,
         }
     }
@@ -267,10 +295,12 @@ impl<'a, P: PolyForm> ComplexPoly<'a, P> {
     pub fn is_owned(&self) -> bool {
         let c0 = match self.c0.storage {
             PolyStorage::Borrowed(_) => false,
+            PolyStorage::BorrowedMut(_) => false,
             PolyStorage::Owned(_) => true,
         };
         let c1 = match self.c1.storage {
             PolyStorage::Borrowed(_) => false,
+            PolyStorage::BorrowedMut(_) => false,
             PolyStorage::Owned(_) => true,
         };
 

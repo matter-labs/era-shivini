@@ -4,6 +4,10 @@ use super::*;
 
 #[inline(always)]
 pub fn bitreverse_index(n: usize, l: usize) -> usize {
+    if l == 0 {
+        assert_eq!(n, 0);
+        return 0;
+    }
     let mut r = n.reverse_bits();
     // now we need to only use the bits that originally were "last" l, so shift
 
@@ -105,17 +109,13 @@ pub fn compute_l0_over_coset(
     quotient_degree: usize,
 ) -> CudaResult<Poly<'static, CosetEvaluations>> {
     // z(x) / (x-1) = x^n -1 / (x-1)
-    let mut domain_elems = dvec!(domain_size);
-    helpers::compute_domain_elems(&mut domain_elems, domain_size)?;
-    ntt::bitreverse(&mut domain_elems)?;
-
-    let coset_shifts = compute_coset_powers_bitreversed(domain_size, quotient_degree);
-
     let mut coset_values = dvec!(domain_size);
+    helpers::compute_domain_elems(&mut coset_values, domain_size)?;
+    ntt::bitreverse(&mut coset_values)?;
+    let coset_shifts = compute_coset_powers_bitreversed(domain_size, quotient_degree);
     let shift = coset_shifts[coset_idx];
     let d_shift: DF = shift.into();
     let one = DF::one()?;
-    mem::d2d(&domain_elems, &mut coset_values)?;
     arith::scale(&mut coset_values, &d_shift)?;
     arith::sub_constant(&mut coset_values, &one)?;
     arith::inverse(&mut coset_values)?;
@@ -123,7 +123,6 @@ pub fn compute_l0_over_coset(
     shift_in_domain.sub_assign(&F::ONE);
     let d_shift_in_n = shift_in_domain.into();
     arith::scale(&mut coset_values, &d_shift_in_n)?;
-
     Ok(Poly::from(coset_values))
 }
 

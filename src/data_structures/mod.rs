@@ -12,12 +12,11 @@ pub use setup::*;
 mod arguments;
 pub use arguments::*;
 
+mod cache;
+pub use cache::*;
+
 mod tree;
 pub use tree::*;
-
-use boojum::cs::traits::GoodAllocator;
-
-use cudart::event::CudaEventCreateFlags;
 
 pub trait AsSingleSlice {
     fn domain_size(&self) -> usize;

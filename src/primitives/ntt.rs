@@ -22,18 +22,20 @@ fn batch_coset_ntt_raw(
     let d_inputs = unsafe { DeviceSlice::from_mut_slice(inputs) };
     let stream = get_stream();
     let inputs_offset = 0; // currently unused, but explicit for readability.
-    boojum_cuda::ntt::batch_ntt_in_place(
-        d_inputs,
-        log_n,
-        num_polys as u32,
-        inputs_offset,
-        stride,
-        bitreversed_input,
-        inverse,
-        log_lde_factor,
-        coset_idx as u32,
-        stream,
-    )
+    if_not_dry_run! {
+        boojum_cuda::ntt::batch_ntt_in_place(
+            d_inputs,
+            log_n,
+            num_polys as u32,
+            inputs_offset,
+            stride,
+            bitreversed_input,
+            inverse,
+            log_lde_factor,
+            coset_idx as u32,
+            stream,
+        )
+    }
 }
 
 fn batch_coset_ntt_raw_into(
@@ -61,21 +63,23 @@ fn batch_coset_ntt_raw_into(
     let stream = get_stream();
     let inputs_offset = 0; // currently unused, but explicit for readability.
     let outputs_offset = 0; // currently unused, but explicit for readability.
-    boojum_cuda::ntt::batch_ntt_out_of_place(
-        d_inputs,
-        d_outputs,
-        log_n,
-        num_polys as u32,
-        inputs_offset,
-        outputs_offset,
-        stride,
-        stride,
-        bitreversed_input,
-        inverse,
-        log_lde_factor,
-        coset_idx as u32,
-        stream,
-    )
+    if_not_dry_run! {
+        boojum_cuda::ntt::batch_ntt_out_of_place(
+            d_inputs,
+            d_outputs,
+            log_n,
+            num_polys as u32,
+            inputs_offset,
+            outputs_offset,
+            stride,
+            stride,
+            bitreversed_input,
+            inverse,
+            log_lde_factor,
+            coset_idx as u32,
+            stream,
+        )
+    }
 }
 
 // Convenience wrappers for our use cases
@@ -156,8 +160,30 @@ pub(crate) fn lde_intt(input: &mut [F]) -> CudaResult<()> {
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn intt_into(input: &[F], output: &mut [F]) -> CudaResult<()> {
     batch_coset_ntt_raw_into(input, output, false, true, 0, input.len(), 1, 1)
+}
+
+pub(crate) fn batch_coset_ntt(
+    inputs: &mut [F],
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+) -> CudaResult<()> {
+    assert!(lde_degree > 1);
+    assert!(lde_degree.is_power_of_two());
+    assert!(coset_idx < lde_degree);
+    batch_coset_ntt_raw(
+        inputs,
+        false,
+        false,
+        coset_idx,
+        domain_size,
+        lde_degree,
+        num_polys,
+    )
 }
 
 pub(crate) fn batch_coset_ntt_into(
@@ -183,10 +209,56 @@ pub(crate) fn batch_coset_ntt_into(
     )
 }
 
+pub(crate) fn batch_inverse_coset_ntt(
+    inputs: &mut [F],
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+) -> CudaResult<()> {
+    assert!(lde_degree > 1);
+    assert!(lde_degree.is_power_of_two());
+    assert!(coset_idx < lde_degree);
+    batch_coset_ntt_raw(
+        inputs,
+        true,
+        true,
+        coset_idx,
+        domain_size,
+        lde_degree,
+        num_polys,
+    )
+}
+
+pub(crate) fn batch_inverse_coset_ntt_into(
+    inputs: &[F],
+    outputs: &mut [F],
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+) -> CudaResult<()> {
+    assert!(lde_degree > 1);
+    assert!(lde_degree.is_power_of_two());
+    assert!(coset_idx < lde_degree);
+    batch_coset_ntt_raw_into(
+        inputs,
+        outputs,
+        true,
+        true,
+        coset_idx,
+        domain_size,
+        lde_degree,
+        num_polys,
+    )
+}
+
 pub(crate) fn bitreverse(input: &mut [F]) -> CudaResult<()> {
     let stream = get_stream();
     let input = unsafe { DeviceSlice::from_mut_slice(input) };
-    boojum_cuda::ops_complex::bit_reverse_in_place(input, stream)
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::bit_reverse_in_place(input, stream)
+    }
 }
 
 pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<()> {
@@ -196,5 +268,7 @@ pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<(
         let input = DeviceSlice::from_mut_slice(input);
         DeviceMatrixMut::new(input, num_rows)
     };
-    boojum_cuda::ops_complex::bit_reverse_in_place(&mut input, stream)
+    if_not_dry_run! {
+        boojum_cuda::ops_complex::bit_reverse_in_place(&mut input, stream)
+    }
 }

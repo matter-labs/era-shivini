@@ -11,7 +11,9 @@ use super::*;
 pub fn compute_domain_elems(buffer: &mut [F], size: usize) -> CudaResult<()> {
     let log_n = size.trailing_zeros();
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    get_powers_of_w(log_n, 0, false, false, buffer, get_stream())
+    if_not_dry_run! {
+        get_powers_of_w(log_n, 0, false, false, buffer, get_stream())
+    }
 }
 
 #[allow(dead_code)]
@@ -20,15 +22,19 @@ pub fn compute_twiddles(buffer: &mut [F], size: usize, inverse: bool) -> CudaRes
     assert_eq!(buffer.len(), fft_size);
     let log_n = size.trailing_zeros();
     let tmp_buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    get_powers_of_w(log_n, 0, inverse, false, tmp_buffer, get_stream())?;
-    ntt::bitreverse(buffer)
+    if_not_dry_run! {
+        get_powers_of_w(log_n, 0, inverse, false, tmp_buffer, get_stream())?;
+        ntt::bitreverse(buffer)
+    }
 }
 
 #[allow(dead_code)]
 pub fn compute_coset_elems(buffer: &mut [F], size: usize) -> CudaResult<()> {
     let log_n = size.trailing_zeros();
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    get_powers_of_g(log_n, 0, false, false, buffer, get_stream())
+    if_not_dry_run! {
+        get_powers_of_g(log_n, 0, false, false, buffer, get_stream())
+    }
 }
 
 pub fn calculate_tmp_buffer_size_for_grand_product(buffer_size: usize) -> CudaResult<usize> {
@@ -85,17 +91,22 @@ pub fn set_value(buffer: &mut [F], value: &DF) -> CudaResult<()> {
         let d_var = DeviceVariable::from_ref(&value.inner[0]);
         (DeviceSlice::from_mut_slice(buffer), d_var)
     };
-    set_by_ref(value, buffer, get_stream())
+    if_not_dry_run! {
+        set_by_ref(value, buffer, get_stream())
+    }
 }
 
 // value is a device value
+#[allow(dead_code)]
 pub fn set_value_generic<T: SetByRef>(buffer: &mut [T], value: &T) -> CudaResult<()> {
     assert_eq!(buffer.is_empty(), false);
     let (buffer, value) = unsafe {
         let h_var = DeviceVariable::from_ref(value);
         (DeviceSlice::from_mut_slice(buffer), h_var)
     };
-    set_by_ref(value, buffer, get_stream())
+    if_not_dry_run! {
+        set_by_ref(value, buffer, get_stream())
+    }
 }
 
 pub fn set_by_value<T: SetByVal>(
@@ -105,18 +116,24 @@ pub fn set_by_value<T: SetByVal>(
 ) -> CudaResult<()> {
     assert_eq!(buffer.is_empty(), false);
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    set_by_val(value, buffer, stream)
+    if_not_dry_run! {
+        set_by_val(value, buffer, stream)
+    }
 }
 
 pub fn set_zero(buffer: &mut [F]) -> CudaResult<()> {
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    set_to_zero(buffer, get_stream())
+    if_not_dry_run! {
+        set_to_zero(buffer, get_stream())
+    }
 }
 
 #[allow(dead_code)]
 pub fn set_zero_generic<T>(buffer: &mut [T]) -> CudaResult<()> {
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    set_to_zero(buffer, get_stream())
+    if_not_dry_run! {
+        set_to_zero(buffer, get_stream())
+    }
 }
 
 pub fn rotate_left(values: &mut [F]) -> CudaResult<()> {
@@ -125,14 +142,16 @@ pub fn rotate_left(values: &mut [F]) -> CudaResult<()> {
     let offset = values.len() - 1;
     mem::d2d(&tmp[1..], &mut values[..offset])?;
     let first = tmp.get(0)?;
-    helpers::set_value(&mut values[offset..(offset + 1)], &first)?;
-
-    Ok(())
+    if_not_dry_run! {
+        set_value(&mut values[offset..(offset + 1)], &first)
+    }
 }
 
 #[allow(dead_code)]
 pub fn set_zero_static(buffer: &mut [u8]) -> CudaResult<()> {
     use cudart::memory::memory_set;
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
-    memory_set(buffer, 0)
+    if_not_dry_run! {
+        memory_set(buffer, 0)
+    }
 }

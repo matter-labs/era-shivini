@@ -19,7 +19,7 @@ pub struct FRIOracle {
     pub num_elems_per_leaf: usize,
 }
 
-impl AsSingleSlice for &FRIOracle {
+impl AsSingleSlice for FRIOracle {
     fn domain_size(&self) -> usize {
         assert_eq!(2 * NUM_EL_PER_HASH * self.num_leafs, self.nodes.len());
         self.num_leafs
@@ -111,7 +111,7 @@ pub struct CodeWord {
     pub(crate) is_base_code_word: bool,
 }
 
-impl AsSingleSlice for &CodeWord {
+impl AsSingleSlice for CodeWord {
     fn domain_size(&self) -> usize {
         self.length()
     }
@@ -448,7 +448,11 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
         intermediate_oracles.push(current_oracle);
 
         transcript.witness_merkle_tree_cap(&oracle_cap.as_ref());
-        let h_challenge = transcript.get_multiple_challenges_fixed::<2>();
+        let h_challenge = if is_dry_run()? {
+            [F::ZERO; 2]
+        } else {
+            transcript.get_multiple_challenges_fixed::<2>()
+        };
 
         let mut h_challenge = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_challenge);
         let mut challenge_powers = vec![];
@@ -470,7 +474,6 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     // since last codeword is tiny we can do ifft and asserts on the cpu
     let last_code_word = intermediate_codewords.pop().unwrap();
     let last_code_len = last_code_word.length();
-    dbg!(last_code_word.length().trailing_zeros());
     let last_code_word_flattened = last_code_word.storage.to_vec_in(A::default())?;
     // FIXME: we can still construct monomials on the device for better stream handling
     synchronize_streams()?;
@@ -486,20 +489,26 @@ pub fn compute_fri<T: Transcript<F, CompatibleCap = [F; 4]>, A: GoodAllocator>(
     let coset = last_coset_inverse.inverse().unwrap();
     // IFFT our presumable LDE of some low degree poly
     let fft_size = last_c0.len();
-    let roots: Vec<F> = precompute_twiddles_for_fft::<_, _, _, true>(fft_size, &worker, &mut ());
+    let roots: Vec<F> = if is_dry_run()? {
+        vec![F::ZERO; fft_size]
+    } else {
+        precompute_twiddles_for_fft::<_, _, _, true>(fft_size, &worker, &mut ())
+    };
     boojum::fft::ifft_natural_to_natural(&mut last_c0, coset, &roots[..fft_size / 2]);
     boojum::fft::ifft_natural_to_natural(&mut last_c1, coset, &roots[..fft_size / 2]);
 
     assert_eq!(final_degree, fft_size / fri_lde_degree);
 
-    // self-check
-    if boojum::config::DEBUG_SATISFIABLE == false {
-        for el in last_c0[final_degree..].iter() {
-            assert_eq!(*el, F::ZERO);
-        }
+    if !is_dry_run()? {
+        // self-check
+        if boojum::config::DEBUG_SATISFIABLE == false {
+            for el in last_c0[final_degree..].iter() {
+                assert_eq!(*el, F::ZERO);
+            }
 
-        for el in last_c1[final_degree..].iter() {
-            assert_eq!(*el, F::ZERO);
+            for el in last_c1[final_degree..].iter() {
+                assert_eq!(*el, F::ZERO);
+            }
         }
     }
 
