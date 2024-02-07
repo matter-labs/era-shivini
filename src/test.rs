@@ -138,8 +138,7 @@ fn init_or_synth_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO
     };
 
     use boojum::cs::cs_builder_reference::*;
-    let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 20);
+    let builder_impl = CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 20);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -210,7 +209,8 @@ fn init_or_synth_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO
 #[test]
 #[ignore]
 fn test_permutation_polys() {
-    let (setup_cs, _finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
+    let (setup_cs, _finalization_hint) =
+        init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -408,7 +408,8 @@ fn test_dry_runs() {
 #[test]
 #[ignore]
 fn test_proof_comparison_for_sha256() {
-    let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
+    let (setup_cs, finalization_hint) =
+        init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -430,11 +431,13 @@ fn test_proof_comparison_for_sha256() {
 
     assert!(domain_size.is_power_of_two());
     let actual_proof = {
-        let (mut proving_cs, _) =
-            init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(finalization_hint.as_ref());
+        let (mut proving_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(
+            finalization_hint.as_ref(),
+        );
         let witness = proving_cs.witness.unwrap();
-        let (reusable_cs, _) =
-            init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(finalization_hint.as_ref());
+        let (reusable_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(
+            finalization_hint.as_ref(),
+        );
         let proof = gpu_prove_from_external_witness_data::<
             _,
             DefaultTranscript,
@@ -456,8 +459,9 @@ fn test_proof_comparison_for_sha256() {
     };
 
     let expected_proof = {
-        let (proving_cs, _) =
-            init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(finalization_hint.as_ref());
+        let (proving_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(
+            finalization_hint.as_ref(),
+        );
         let worker = Worker::new();
         let prover_config = init_proof_cfg();
 
@@ -508,8 +512,7 @@ fn init_or_synth_cs_for_sha256<CFG: CSConfig, A: GoodAllocator, const DO_SYNTH: 
     };
 
     use boojum::cs::cs_builder_reference::*;
-    let builder_impl =
-        CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 19);
+    let builder_impl = CsReferenceImplementationBuilder::<F, F, CFG>::new(geometry, 1 << 19);
     use boojum::cs::cs_builder::new_builder;
     let builder = new_builder::<_, F>(builder_impl);
 
@@ -1263,7 +1266,8 @@ mod zksync {
     #[ignore]
     #[should_panic(expected = "placeholder found in a public input location")]
     fn test_public_input_placeholder_fail() {
-        let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
+        let (setup_cs, finalization_hint) =
+            init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
         let worker = Worker::new();
         let proof_config = init_proof_cfg();
         let (setup_base, _, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
@@ -1273,11 +1277,13 @@ mod zksync {
         );
         let domain_size = setup_cs.max_trace_len;
         let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-        let (mut proving_cs, _) =
-            init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(finalization_hint.as_ref());
+        let (mut proving_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(
+            finalization_hint.as_ref(),
+        );
         let mut witness = proving_cs.witness.as_ref().unwrap().clone();
-        let (reusable_cs, _) =
-            init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(finalization_hint.as_ref());
+        let (reusable_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(
+            finalization_hint.as_ref(),
+        );
         let mut gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
             setup_base.clone(),
             clone_reference_tree(&setup_tree),

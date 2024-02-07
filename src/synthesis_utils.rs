@@ -209,10 +209,8 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
     let geometry = circuit.geometry();
     let (max_trace_len, num_vars) = circuit.size_hint();
 
-    let builder_impl = CsReferenceImplementationBuilder::<F, P, CFG>::new(
-        geometry,
-        max_trace_len.unwrap(),
-    );
+    let builder_impl =
+        CsReferenceImplementationBuilder::<F, P, CFG>::new(geometry, max_trace_len.unwrap());
     let builder = new_builder::<_, F>(builder_impl);
     let round_function = ZkSyncDefaultRoundFunction::default();
 
@@ -234,8 +232,12 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
         );
     }
 
- 
-    fn into_assembly<CFG: CSConfig, GC: GateConfigurationHolder<F>, T: StaticToolboxHolder, A: GoodAllocator>(
+    fn into_assembly<
+        CFG: CSConfig,
+        GC: GateConfigurationHolder<F>,
+        T: StaticToolboxHolder,
+        A: GoodAllocator,
+    >(
         mut cs: CSReferenceImplementation<F, P, CFG, GC, T>,
         do_synth: bool,
         finalization_hint: Option<&FinalizationHintsForProver>,
