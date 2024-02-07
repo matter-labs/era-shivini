@@ -1,4 +1,4 @@
-use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
+use crate::cs::{materialize_permutation_cols_from_indexes_into, GpuSetup};
 
 use super::*;
 use std::{path::Path, sync::Arc};
@@ -109,16 +109,16 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
         let prover_config = init_proof_cfg();
 
         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                prover_config,
-                &setup_base,
-                &setup,
-                &setup_tree,
-                &vk,
-                &vars_hint,
-                &wits_hint,
-                (),
-                &worker,
-            )
+            prover_config,
+            &setup_base,
+            &setup,
+            &setup_tree,
+            &vk,
+            &vars_hint,
+            &wits_hint,
+            (),
+            &worker,
+        )
     };
     let actual_proof = actual_proof.into();
     compare_proofs(&expected_proof, &actual_proof);
@@ -158,7 +158,7 @@ fn init_or_synth_cs_with_poseidon2_and_private_witnesses<CFG: CSConfig, const DO
     // quick and dirty way of testing with private witnesses
     fn synthesize<CS: ConstraintSystem<F>>(cs: &mut CS) -> [Variable; 8] {
         use rand::{Rng, SeedableRng};
-        let mut rng = rand::rngs::StdRng::seed_from_u64(42 as u64);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
         type R = Poseidon2Goldilocks;
         let num_gates = 1 << 16;
         let mut prev_state = [cs.allocate_constant(F::ZERO); 12];
@@ -238,13 +238,15 @@ fn test_permutation_polys() {
     println!("Gpu setup is made");
 
     let mut actual_copy_permutation_polys =
-        GenericStorage::allocate(num_copy_permutation_polys, domain_size).unwrap();
+        GenericStorage::allocate(num_copy_permutation_polys, domain_size);
     let copy_permutation_polys_as_slice_view = actual_copy_permutation_polys.as_single_slice_mut();
     println!("GenericSetupStorage is allocated");
-
-    materialize_permutation_cols_from_transformed_hints_into(
+    let variable_indexes =
+        construct_indexes_from_hint(&gpu_setup.variables_hint, domain_size).unwrap();
+    materialize_permutation_cols_from_indexes_into(
         copy_permutation_polys_as_slice_view,
-        &gpu_setup.variables_hint,
+        &variable_indexes,
+        num_copy_permutation_polys,
         domain_size,
     )
     .unwrap();
@@ -257,7 +259,7 @@ fn test_permutation_polys() {
         .map(|p| P::vec_into_base_vec(p))
         .zip(
             actual_copy_permutation_polys
-                .into_poly_storage::<LagrangeBasis>()
+                .into_poly_storage()
                 .polynomials
                 .into_iter()
                 .map(|p| p.storage.into_inner())
@@ -298,16 +300,16 @@ fn test_setup_comparison() {
     let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup).unwrap();
 
     assert_eq!(
-        expected_setup.storage.inner.to_vec().unwrap(),
-        actual_setup.storage.inner.to_vec().unwrap(),
+        expected_setup.inner.to_vec().unwrap(),
+        actual_setup.inner.to_vec().unwrap(),
     );
 
     let expected_monomial = expected_setup.into_monomials().unwrap();
     let actual_monomial = actual_setup.into_monomials().unwrap();
 
     assert_eq!(
-        expected_monomial.storage.inner.to_vec().unwrap(),
-        actual_monomial.storage.inner.to_vec().unwrap(),
+        expected_monomial.inner.to_vec().unwrap(),
+        actual_monomial.inner.to_vec().unwrap(),
     );
 }
 
@@ -318,6 +320,87 @@ fn clone_reference_tree(
         cap_size: input.cap_size,
         leaf_hashes: input.leaf_hashes.clone(),
         node_hashes_enumerated_from_leafs: input.node_hashes_enumerated_from_leafs.clone(),
+    }
+}
+
+#[cfg(feature = "allocator_stats")]
+#[serial]
+#[test]
+#[ignore]
+fn test_dry_runs() {
+    let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
+
+    let worker = Worker::new();
+    let prover_config = init_proof_cfg();
+    let (setup_base, _setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+        &worker,
+        prover_config.fri_lde_factor,
+        prover_config.merkle_tree_cap_size,
+    );
+    let domain_size = setup_cs.max_trace_len;
+    let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
+    let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
+        setup_base.clone(),
+        clone_reference_tree(&setup_tree),
+        vars_hint.clone(),
+        wits_hint.clone(),
+        &worker,
+    )
+    .unwrap();
+
+    assert!(domain_size.is_power_of_two());
+    let (mut proving_cs, _) =
+        init_or_synth_cs_for_sha256::<ProvingCSConfig, true>(finalization_hint.as_ref());
+    let witness = proving_cs.materialize_witness_vec();
+    let (reusable_cs, _) =
+        init_or_synth_cs_for_sha256::<ProvingCSConfig, false>(finalization_hint.as_ref());
+    let candidates =
+        CacheStrategy::get_strategy_candidates(&reusable_cs, &prover_config, &gpu_setup);
+    for (_, strategy) in candidates.iter().copied() {
+        let proof = || {
+            let _ = crate::prover::gpu_prove_from_external_witness_data_with_cache_strategy::<
+                _,
+                DefaultTranscript,
+                DefaultTreeHasher,
+                NoPow,
+                Global,
+            >(
+                &reusable_cs,
+                &witness,
+                prover_config.clone(),
+                &gpu_setup,
+                &vk,
+                (),
+                &worker,
+                strategy,
+            )
+            .expect("gpu proof");
+        };
+        dry_run_start();
+        proof();
+        dry_run_stop().unwrap();
+        let dry = _alloc()
+            .stats
+            .lock()
+            .unwrap()
+            .allocations_at_maximum_block_count_at_maximum_tail_index
+            .clone();
+        let dry_tail_index = dry.tail_index();
+        _setup_cache_reset();
+        _alloc().stats.lock().unwrap().reset();
+        assert_eq!(_alloc().stats.lock().unwrap().allocations.tail_index(), 0);
+        proof();
+        let wet = _alloc()
+            .stats
+            .lock()
+            .unwrap()
+            .allocations_at_maximum_block_count_at_maximum_tail_index
+            .clone();
+        let wet_tail_index = wet.tail_index();
+        _setup_cache_reset();
+        _alloc().stats.lock().unwrap().reset();
+        assert_eq!(_alloc().stats.lock().unwrap().allocations.tail_index(), 0);
+        assert_eq!(dry_tail_index, wet_tail_index);
     }
 }
 
@@ -336,7 +419,6 @@ fn test_proof_comparison_for_sha256() {
     );
     let domain_size = setup_cs.max_trace_len;
     let _ctx = ProverContext::dev(domain_size).expect("init gpu prover context");
-    // let ctx = ProverContext::create_8gb_dev(domain_size).expect("gpu prover context");
     let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
         setup_base.clone(),
         clone_reference_tree(&setup_tree),
@@ -380,16 +462,16 @@ fn test_proof_comparison_for_sha256() {
         let prover_config = init_proof_cfg();
 
         proving_cs.prove_from_precomputations::<GoldilocksExt2, DefaultTranscript, DefaultTreeHasher, NoPow>(
-                prover_config,
-                &setup_base,
-                &setup,
-                &setup_tree,
-                &vk,
-                &vars_hint,
-                &wits_hint,
-                (),
-                &worker,
-            )
+            prover_config,
+            &setup_base,
+            &setup,
+            &setup_tree,
+            &vk,
+            &vars_hint,
+            &wits_hint,
+            (),
+            &worker,
+        )
     };
     let actual_proof = actual_proof.into();
     compare_proofs(&expected_proof, &actual_proof);
@@ -406,7 +488,7 @@ fn init_or_synth_cs_for_sha256<CFG: CSConfig, A: GoodAllocator, const DO_SYNTH: 
     // let len = 2 * (1 << 10);
     let len = 2 * (1 << 2);
     use rand::{Rng, SeedableRng};
-    let mut rng = rand::rngs::StdRng::seed_from_u64(42 as u64);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 
     let mut input = vec![];
     for _ in 0..len {
@@ -498,7 +580,7 @@ fn init_or_synth_cs_for_sha256<CFG: CSConfig, A: GoodAllocator, const DO_SYNTH: 
         //     cs.place_variable(var.get_variable(), next_available_row, column);
         //     cs.set_public(column, next_available_row);
         // }
-        let output = hex::encode(&(output.witness_hook(&*cs))().unwrap());
+        let output = hex::encode(&output.witness_hook(&*cs)().unwrap());
         let reference_output = hex::encode(reference_output.as_slice());
         assert_eq!(output, reference_output);
     }
@@ -708,6 +790,7 @@ mod zksync {
         aux_definitions::witness_oracle::VmWitnessOracle,
         circuit_definitions::base_layer::ZkSyncBaseLayerCircuit, ZkSyncDefaultRoundFunction,
     };
+    use cudart_sys::CudaError;
 
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 
@@ -820,26 +903,24 @@ mod zksync {
         let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup).unwrap();
 
         assert_eq!(
-            expected_setup.storage.inner.to_vec().unwrap(),
-            actual_setup.storage.inner.to_vec().unwrap(),
+            expected_setup.inner.to_vec().unwrap(),
+            actual_setup.inner.to_vec().unwrap(),
         );
 
         let expected_monomial = expected_setup.into_monomials().unwrap();
         let actual_monomial = actual_setup.into_monomials().unwrap();
 
         assert_eq!(
-            expected_monomial.storage.inner.to_vec().unwrap(),
-            actual_monomial.storage.inner.to_vec().unwrap(),
+            expected_monomial.inner.to_vec().unwrap(),
+            actual_monomial.inner.to_vec().unwrap(),
         );
     }
 
-    fn compare_proofs_for_all_zksync_circuits(limit_mem: bool) -> CudaResult<()> {
+    #[serial]
+    #[test]
+    fn compare_proofs_for_all_zksync_circuits() -> CudaResult<()> {
         let worker = &Worker::new();
-        let _ctx = if limit_mem {
-            ProverContext::create_limited().expect("gpu prover context")
-        } else {
-            ProverContext::create().expect("gpu prover context")
-        };
+        let _ctx = ProverContext::create().expect("gpu prover context");
 
         for main_dir in ["base", "leaf", "node"] {
             let data_dir = format!("./test_data/{}", main_dir);
@@ -853,12 +934,12 @@ mod zksync {
                 let reference_proof_path =
                     format!("{}/{}.cpu.proof", data_dir, circuit.numeric_circuit_type());
 
-                let reference_proof_path = std::path::Path::new(&reference_proof_path);
+                let reference_proof_path = Path::new(&reference_proof_path);
 
                 let gpu_proof_path =
                     format!("{}/{}.gpu.proof", data_dir, circuit.numeric_circuit_type());
 
-                let gpu_proof_path = std::path::Path::new(&gpu_proof_path);
+                let gpu_proof_path = Path::new(&gpu_proof_path);
 
                 if reference_proof_path.exists() && gpu_proof_path.exists() {
                     continue;
@@ -896,7 +977,7 @@ mod zksync {
                     let witness = proving_cs.witness.unwrap();
                     let reusable_cs =
                         init_cs_for_external_proving(circuit.clone(), &finalization_hint);
-                    gpu_prove_from_external_witness_data::<
+                    let proof = gpu_prove_from_external_witness_data::<
                         _,
                         DefaultTranscript,
                         DefaultTreeHasher,
@@ -911,7 +992,8 @@ mod zksync {
                         (),
                         worker,
                     )
-                    .expect("gpu proof")
+                    .expect("gpu proof");
+                    proof
                 };
 
                 let reference_proof_file = std::fs::File::open(reference_proof_path).unwrap();
@@ -931,19 +1013,6 @@ mod zksync {
     #[serial]
     #[test]
     #[ignore]
-    fn compare_proofs_for_all_zksync_circuits_limit_mem() -> CudaResult<()> {
-        compare_proofs_for_all_zksync_circuits(true)
-    }
-
-    #[serial]
-    #[test]
-    fn compare_proofs_for_all_zksync_circuits_all_mem() -> CudaResult<()> {
-        compare_proofs_for_all_zksync_circuits(false)
-    }
-
-    #[serial]
-    #[test]
-    #[ignore]
     fn generate_reference_proofs_for_all_zksync_circuits() {
         let worker = &Worker::new();
 
@@ -953,7 +1022,7 @@ mod zksync {
             let circuits = scan_directory_for_circuits(&data_dir);
 
             for circuit in circuits.into_iter() {
-                if std::path::Path::new(&format!(
+                if Path::new(&format!(
                     "{}/{}.cpu.proof",
                     data_dir,
                     circuit.numeric_circuit_type(),
@@ -1013,15 +1082,12 @@ mod zksync {
         }
     }
 
-    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(
-        limit_mem: bool,
-    ) {
+    #[serial]
+    #[test]
+    #[ignore]
+    fn compare_proofs_for_single_zksync_circuit() {
         let circuit = get_circuit_from_env();
-        let _ctx = if limit_mem {
-            ProverContext::create_limited().expect("gpu prover context")
-        } else {
-            ProverContext::create().expect("gpu prover context")
-        };
+        let _ctx = ProverContext::create().expect("gpu prover context");
 
         println!(
             "{} {}",
@@ -1047,7 +1113,6 @@ mod zksync {
 
         let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
 
-        println!("gpu proving");
         let gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
             setup_base.clone(),
             clone_reference_tree(&setup_tree),
@@ -1056,6 +1121,8 @@ mod zksync {
             &worker,
         )
         .expect("gpu setup");
+
+        println!("gpu proving");
         let gpu_proof = {
             let witness = proving_cs.witness.as_ref().unwrap();
             let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
@@ -1076,6 +1143,7 @@ mod zksync {
             )
             .expect("gpu proof")
         };
+
         println!("cpu proving");
         let reference_proof = {
             // we can't clone assembly lets synth it again
@@ -1103,15 +1171,91 @@ mod zksync {
     #[serial]
     #[test]
     #[ignore]
-    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot_all_mem() {
-        compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(false);
-    }
-
-    #[serial]
-    #[test]
-    #[ignore]
-    fn compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot_limit_mem() {
-        compare_proofs_with_external_synthesis_for_single_zksync_circuit_in_single_shot(true);
+    fn benchmark_single_circuit() {
+        let circuit = get_circuit_from_env();
+        println!(
+            "{} {}",
+            circuit.numeric_circuit_type(),
+            circuit.short_description()
+        );
+        let worker = &Worker::new();
+        let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit.clone());
+        let proof_cfg = circuit.proof_config();
+        let (setup_base, _setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+            worker,
+            proof_cfg.fri_lde_factor,
+            proof_cfg.merkle_tree_cap_size,
+        );
+        let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+        let witness = proving_cs.materialize_witness_vec();
+        let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+        let gpu_setup = {
+            let _ctx = ProverContext::create().expect("gpu prover context");
+            GpuSetup::<Global>::from_setup_and_hints(
+                setup_base.clone(),
+                clone_reference_tree(&setup_tree),
+                vars_hint.clone(),
+                wits_hint.clone(),
+                &worker,
+            )
+            .expect("gpu setup")
+        };
+        let proof_fn = || {
+            let _ = gpu_prove_from_external_witness_data::<
+                _,
+                DefaultTranscript,
+                DefaultTreeHasher,
+                NoPow,
+                Global,
+            >(
+                &reusable_cs,
+                &witness,
+                proof_cfg.clone(),
+                &gpu_setup,
+                &vk,
+                (),
+                worker,
+            )
+            .expect("gpu proof");
+        };
+        loop {
+            for i in 0..40 {
+                let num_blocks = 2560 - i * 64;
+                println!("num_blocks = {num_blocks}");
+                let ctx = ProverContext::create_limited(num_blocks).expect("gpu prover context");
+                println!("warmup");
+                proof_fn();
+                _setup_cache_reset();
+                let strategy =
+                    CacheStrategy::get::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
+                        &reusable_cs,
+                        &witness,
+                        proof_cfg.clone(),
+                        &gpu_setup,
+                        &vk,
+                        (),
+                        worker,
+                    );
+                let strategy = match strategy {
+                    Ok(s) => s,
+                    Err(CudaError::ErrorMemoryAllocation) => {
+                        println!("no cache strategy for {num_blocks}  found");
+                        return;
+                    }
+                    Err(e) => panic!("unexpected error: {e}"),
+                };
+                println!("strategy: {:?}", strategy);
+                println!("first run");
+                let start = std::time::Instant::now();
+                proof_fn();
+                println!("◆ total: {:?}", start.elapsed());
+                println!("second run");
+                let start = std::time::Instant::now();
+                proof_fn();
+                println!("◆ total: {:?}", start.elapsed());
+                drop(ctx);
+            }
+        }
     }
 
     #[serial]

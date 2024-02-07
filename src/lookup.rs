@@ -11,10 +11,10 @@ pub fn compute_lookup_argument_over_specialized_cols(
     setup: &SetupPolynomials<LagrangeBasis>,
     table_id_column_idxes: Vec<usize>,
     beta: &DExt,
-    powers_of_gamma: &DVec<EF>,
+    powers_of_gamma: &SVec<EF>,
     variables_offset: usize,
     lookup_params: LookupParameters,
-    storage: &mut GenericArgumentStorage<LagrangeBasis>,
+    storage: &mut GenericArgumentsStorage<LagrangeBasis>,
 ) -> CudaResult<()> {
     assert!(lookup_params.is_specialized_lookup());
     let TracePolynomials {
@@ -29,9 +29,9 @@ pub fn compute_lookup_argument_over_specialized_cols(
         ..
     } = setup;
 
-    let ArgumentPolynomialsMut {
-        lookup_a_polys: subargs_a,
-        lookup_b_polys: subargs_b,
+    let ArgumentsPolynomials {
+        lookup_a_polys: mut subargs_a,
+        lookup_b_polys: mut subargs_b,
         ..
     } = storage.as_polynomials_mut();
 
@@ -111,8 +111,8 @@ pub fn compute_lookup_argument_over_specialized_cols(
 
     lookup_subargs(
         &variable_cols_for_lookup,
-        subargs_a,
-        subargs_b,
+        &mut subargs_a,
+        &mut subargs_b,
         &beta,
         &powers_of_gamma,
         &table_id_col,
@@ -169,7 +169,7 @@ pub fn compute_lookup_argument_over_general_purpose_cols(
     _variables_offset: usize,
     _lookup_params: LookupParameters,
     _lde_degree: usize,
-    _storage: &mut GenericArgumentStorage<LagrangeBasis>,
+    _storage: &mut GenericArgumentsStorage<LagrangeBasis>,
 ) -> CudaResult<()> {
     // let BaseTrace {
     //     variable_cols,
@@ -261,40 +261,22 @@ pub fn compute_lookup_argument_over_general_purpose_cols(
     unimplemented!()
 }
 
-pub fn compute_quotient_for_lookup_over_specialized_cols<'a, 'b>(
-    trace: &TracePolynomials<'a, CosetEvaluations>,
-    setup: &SetupPolynomials<'a, CosetEvaluations>,
-    argument: &ArgumentPolynomials<'a, CosetEvaluations>,
+pub fn compute_quotient_for_lookup_over_specialized_cols(
+    variable_cols: &[Poly<CosetEvaluations>],
+    multiplicity_cols: &[Poly<CosetEvaluations>],
+    constant_cols: &[Poly<CosetEvaluations>],
+    table_cols: &[Poly<CosetEvaluations>],
+    lookup_a_polys: &[ComplexPoly<CosetEvaluations>],
+    lookup_b_polys: &[ComplexPoly<CosetEvaluations>],
     lookup_params: LookupParameters,
     beta: &DExt,
-    powers_of_gamma: &Option<DVec<EF>>,
-    powers_of_alpha: &Option<DVec<EF>>,
+    powers_of_gamma: &Option<SVec<EF>>,
+    powers_of_alpha: &Option<SVec<EF>>,
     variables_offset: usize,
     num_column_elements_per_subargument: usize,
     table_ids_column_idxes: &[usize],
-    quotient: &mut ComplexPoly<'b, CosetEvaluations>,
-) -> CudaResult<()>
-where
-    'a: 'b,
-{
-    let TracePolynomials {
-        variable_cols,
-        witness_cols: _,
-        multiplicity_cols,
-    } = trace;
-
-    let SetupPolynomials {
-        constant_cols,
-        table_cols,
-        ..
-    } = setup;
-
-    let ArgumentPolynomials {
-        lookup_a_polys,
-        lookup_b_polys,
-        ..
-    } = argument;
-
+    quotient: &mut ComplexPoly<CosetEvaluations>,
+) -> CudaResult<()> {
     let num_subarguments = match lookup_params {
         LookupParameters::UseSpecializedColumnsWithTableIdAsVariable {
             width: _,

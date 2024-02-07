@@ -3,17 +3,14 @@ use cudart::memory::{memory_get_info, DeviceAllocation};
 use super::*;
 use derivative::*;
 use std::alloc::{Allocator, Layout};
+use std::ops::Deref;
 
+use cudart_sys::CudaError;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const FREE_MEMORY_SLACK: usize = 1 << 23; // 8 MB
-#[cfg(feature = "recompute")]
-pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1340 + 32;
-#[cfg(not(feature = "recompute"))]
-pub const ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 1695 + 64;
-pub const SMALL_ALLOCATOR_LIMITED_BLOCKS_COUNT: usize = 27 + 16;
+pub const SMALL_ALLOCATOR_BLOCKS_COUNT: usize = 1 << 10; // 256 KB
 
 #[derive(Derivative)]
 #[derivative(Clone, Debug)]
@@ -22,12 +19,13 @@ pub struct StaticDeviceAllocator {
     memory_size: usize,
     block_size_in_bytes: usize,
     // TODO: Can we use deque
-    bitmap: Arc<Vec<AtomicBool>>,
+    bitmap: Arc<Mutex<Vec<bool>>>,
     #[cfg(feature = "allocator_stats")]
-    pub stats: Arc<std::sync::Mutex<stats::AllocationStats>>,
+    pub(crate) stats: Arc<Mutex<stats::AllocationStats>>,
 }
 
 #[cfg(feature = "allocator_stats")]
+#[allow(dead_code)]
 mod stats {
     use derivative::Derivative;
     use std::collections::BTreeMap;
@@ -55,7 +53,7 @@ mod stats {
                 .map_or(0, |(&index, &(size, _))| index + size)
         }
 
-        fn print(&self, detailed: bool, with_backtrace: bool) {
+        pub(crate) fn print(&self, detailed: bool, with_backtrace: bool) {
             assert!(detailed || !with_backtrace);
             if self.0.is_empty() {
                 println!("no allocations");
@@ -87,7 +85,7 @@ mod stats {
 
     #[derive(Derivative)]
     #[derivative(Clone, Debug, Default)]
-    pub struct AllocationStats {
+    pub(crate) struct AllocationStats {
         pub allocations: Allocations,
         pub allocations_at_maximum_block_count: Allocations,
         pub allocations_at_maximum_block_count_at_maximum_tail_index: Allocations,
@@ -134,6 +132,12 @@ mod stats {
             self.allocations_at_maximum_block_count_at_maximum_tail_index
                 .print(detailed, with_backtrace);
         }
+
+        pub fn reset(&mut self) {
+            self.allocations_at_maximum_block_count = self.allocations.clone();
+            self.allocations_at_maximum_block_count_at_maximum_tail_index =
+                self.allocations.clone();
+        }
     }
 }
 
@@ -148,18 +152,12 @@ impl StaticAllocator for StaticDeviceAllocator {}
 impl GoodAllocator for StaticDeviceAllocator {}
 
 impl StaticDeviceAllocator {
-    fn init_bitmap(num_blocks: usize) -> Vec<AtomicBool> {
-        let mut bitmap = vec![];
-        for _ in 0..num_blocks {
-            bitmap.push(AtomicBool::new(false))
-        }
-
-        bitmap
+    fn init_bitmap(num_blocks: usize) -> Vec<bool> {
+        vec![false; num_blocks]
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        use cudart::slice::CudaSlice;
-        self.memory.as_ptr()
+        cudart::slice::CudaSlice::as_ptr(self.memory.deref())
     }
 
     pub fn block_size_in_bytes(&self) -> usize {
@@ -184,9 +182,9 @@ impl StaticDeviceAllocator {
             memory: Arc::new(memory),
             memory_size: memory_size_in_bytes,
             block_size_in_bytes,
-            bitmap: Arc::new(Self::init_bitmap(num_blocks)),
+            bitmap: Arc::new(Mutex::new(Self::init_bitmap(num_blocks))),
             #[cfg(feature = "allocator_stats")]
-            stats: Arc::new(std::sync::Mutex::new(Default::default())),
+            stats: Default::default(),
         };
 
         Ok(alloc)
@@ -202,27 +200,10 @@ impl StaticDeviceAllocator {
         Self::init(num_blocks, block_size)
     }
 
-    pub fn init_limited(block_size: usize) -> CudaResult<Self> {
-        let (memory_size_in_bytes, _total) = memory_get_info().expect("get memory info");
-        assert!(memory_size_in_bytes >= FREE_MEMORY_SLACK);
-        let free_memory_size_in_bytes = memory_size_in_bytes - FREE_MEMORY_SLACK;
-        let block_size_in_bytes = block_size * std::mem::size_of::<F>();
-        let requested_memory_size_in_bytes = ALLOCATOR_LIMITED_BLOCKS_COUNT * block_size_in_bytes;
-        assert!(
-            requested_memory_size_in_bytes <= free_memory_size_in_bytes,
-            "requested memory {}bytes, free memory {} bytes",
-            requested_memory_size_in_bytes,
-            free_memory_size_in_bytes
-        );
-        Self::init(ALLOCATOR_LIMITED_BLOCKS_COUNT, block_size)
-    }
-
     fn find_free_block(&self) -> Option<usize> {
-        for (idx, entry) in self.bitmap.iter().enumerate() {
-            if entry
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
-                .is_ok()
-            {
+        for (idx, entry) in self.bitmap.lock().unwrap().iter_mut().enumerate() {
+            if !*entry {
+                *entry = true;
                 return Some(idx);
             }
         }
@@ -235,7 +216,8 @@ impl StaticDeviceAllocator {
         &self,
         requested_num_blocks: usize,
     ) -> Option<std::ops::Range<usize>> {
-        if requested_num_blocks > self.bitmap.len() {
+        let mut bitmap = self.bitmap.lock().unwrap();
+        if requested_num_blocks > bitmap.len() {
             return None;
         }
         let _range_of_blocks_found = false;
@@ -246,34 +228,31 @@ impl StaticDeviceAllocator {
         let mut busy_block_idx = 0;
         loop {
             let mut has_busy_block = false;
-            for (idx, sub_entry) in self.bitmap[start..end].iter().enumerate() {
-                if sub_entry.load(Ordering::SeqCst) {
+            for (idx, sub_entry) in bitmap[start..end].iter().copied().enumerate() {
+                if sub_entry {
                     has_busy_block = true;
                     busy_block_idx = start + idx;
                 }
             }
             if has_busy_block == false {
-                for entry in self.bitmap[start..end].iter() {
-                    entry.store(true, Ordering::SeqCst);
+                for entry in bitmap[start..end].iter_mut() {
+                    *entry = true;
                 }
                 return Some(start..end);
             } else {
                 start = busy_block_idx + 1;
                 end = start + requested_num_blocks;
-                if end > self.bitmap.len() {
+                if end > bitmap.len() {
                     break;
                 }
             }
         }
-        panic!("not found block {} {} {}", start, end, self.bitmap.len());
+        // panic!("not found block {} {} {}", start, end, self.bitmap.len());
         None
     }
 
     fn free_block(&self, index: usize) {
-        // assert!(self.bitmap[index].load(Ordering::SeqCst));
-        let _ = self.bitmap[index]
-            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok();
+        self.bitmap.lock().unwrap()[index] = false;
     }
 
     pub fn free(self) -> CudaResult<()> {
@@ -327,6 +306,12 @@ unsafe impl Allocator for StaticDeviceAllocator {
                 let ptr = unsafe { NonNull::new_unchecked(ptr as _) };
                 return Ok(NonNull::slice_from_raw_parts(ptr, size));
             }
+            if is_dry_run().unwrap_or(true) {
+                dry_run_fail(CudaError::ErrorMemoryAllocation);
+                let ptr =
+                    unsafe { NonNull::new_unchecked(self.as_ptr().add(self.memory_size) as _) };
+                return Ok(NonNull::slice_from_raw_parts(ptr, size));
+            };
             panic!("allocation of {} blocks has failed", num_blocks);
             return Err(std::alloc::AllocError);
         }
@@ -339,6 +324,12 @@ unsafe impl Allocator for StaticDeviceAllocator {
             let ptr = unsafe { NonNull::new_unchecked(ptr as _) };
             Ok(NonNull::slice_from_raw_parts(ptr, size))
         } else {
+            if is_dry_run().unwrap_or(true) {
+                dry_run_fail(CudaError::ErrorMemoryAllocation);
+                let ptr =
+                    unsafe { NonNull::new_unchecked(self.as_ptr().add(self.memory_size) as _) };
+                return Ok(NonNull::slice_from_raw_parts(ptr, size));
+            };
             panic!("allocation of 1 block has failed");
             Err(std::alloc::AllocError)
         }
@@ -353,6 +344,10 @@ unsafe impl Allocator for StaticDeviceAllocator {
         assert!(size > 0);
         // assert_eq!(size % self.block_size_in_bytes, 0);
         let offset = unsafe { ptr.as_ptr().offset_from(self.as_ptr()) } as usize;
+        if offset >= self.memory_size {
+            assert_eq!(is_dry_run().err(), Some(CudaError::ErrorMemoryAllocation));
+            return;
+        }
         assert_eq!(offset % self.block_size_in_bytes, 0);
         let index = offset / self.block_size_in_bytes;
         let num_blocks = size / self.block_size_in_bytes;
@@ -374,7 +369,7 @@ impl SmallStaticDeviceAllocator {
     pub fn init() -> CudaResult<Self> {
         // cuda requires alignment to be  multiple of 32 goldilocks elems
         const BLOCK_SIZE: usize = 32;
-        let inner = StaticDeviceAllocator::init(SMALL_ALLOCATOR_LIMITED_BLOCKS_COUNT, BLOCK_SIZE)?;
+        let inner = StaticDeviceAllocator::init(SMALL_ALLOCATOR_BLOCKS_COUNT, BLOCK_SIZE)?;
         Ok(Self { inner })
     }
 

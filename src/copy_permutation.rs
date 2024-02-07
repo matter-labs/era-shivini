@@ -5,19 +5,21 @@ use super::*;
 pub fn compute_partial_products(
     raw_trace: &TracePolynomials<LagrangeBasis>,
     raw_setup: &SetupPolynomials<LagrangeBasis>,
-    non_residues_by_beta: &DVec<EF>,
+    non_residues_by_beta: &SVec<EF>,
     beta: &DExt,
     gamma: &DExt,
     num_cols_per_product: usize,
-    storage: &mut GenericArgumentStorage<LagrangeBasis>,
+    storage: &mut GenericArgumentsStorage<LagrangeBasis>,
 ) -> CudaResult<()> {
     let TracePolynomials { variable_cols, .. } = raw_trace;
 
-    let ArgumentPolynomialsMut {
-        z_poly,
-        partial_products,
+    let ArgumentsPolynomials {
+        mut z_polys,
+        mut partial_products,
         ..
     } = storage.as_polynomials_mut();
+
+    let z_poly = &mut z_polys[0];
 
     let SetupPolynomials {
         permutation_cols, ..
@@ -92,7 +94,7 @@ pub fn compute_partial_products(
 pub fn compute_quotient_for_partial_products_naive<'a, 'b>(
     trace: &TracePolynomials<'a, CosetEvaluations>,
     setup: &SetupPolynomials<'a, CosetEvaluations>,
-    argument: &ArgumentPolynomials<'a, CosetEvaluations>,
+    argument: &ArgumentsPolynomials<'a, CosetEvaluations>,
     omega_values: &Poly<'a, CosetEvaluations>,
     num_cols_per_product: usize,
     beta: DExt,
@@ -110,11 +112,13 @@ where
         permutation_cols, ..
     } = setup;
 
-    let ArgumentPolynomials {
-        z_poly,
+    let ArgumentsPolynomials {
+        z_polys,
         partial_products,
         ..
     } = argument;
+
+    let z_poly = &z_polys[0];
 
     let mut non_residues_by_beta_transformed = vec![];
     for el in non_residues_by_beta.to_vec()?.into_iter() {
@@ -146,7 +150,7 @@ where
     lhs.push(&shifted_z);
 
     let mut rhs = vec![];
-    rhs.push(*z_poly);
+    rhs.push(z_poly);
     for p in partial_products.iter() {
         rhs.push(p);
     }
@@ -200,33 +204,19 @@ where
     Ok(())
 }
 
-pub fn compute_quotient_for_partial_products<'a, 'b>(
-    trace: &TracePolynomials<'a, CosetEvaluations>,
-    setup: &SetupPolynomials<'a, CosetEvaluations>,
-    argument: &ArgumentPolynomials<'a, CosetEvaluations>,
-    omega_values: &Poly<'a, CosetEvaluations>,
+pub fn compute_quotient_for_partial_products(
+    variable_cols: &[Poly<CosetEvaluations>],
+    permutation_cols: &[Poly<CosetEvaluations>],
+    z_poly: &ComplexPoly<CosetEvaluations>,
+    partial_products: &[ComplexPoly<CosetEvaluations>],
+    omega_values: &Poly<CosetEvaluations>,
     num_cols_per_product: usize,
     beta: &DExt,
     gamma: &DExt,
-    non_residues_by_beta: &DVec<EF>,
-    powers_of_alpha: &DVec<EF>,
-    quotient: &mut ComplexPoly<'b, CosetEvaluations>,
-) -> CudaResult<()>
-where
-    'a: 'b,
-{
-    let TracePolynomials { variable_cols, .. } = trace;
-
-    let SetupPolynomials {
-        permutation_cols, ..
-    } = setup;
-
-    let ArgumentPolynomials {
-        z_poly,
-        partial_products,
-        ..
-    } = argument;
-
+    non_residues_by_beta: &SVec<EF>,
+    powers_of_alpha: &SVec<EF>,
+    quotient: &mut ComplexPoly<CosetEvaluations>,
+) -> CudaResult<()> {
     // z(w*x) * f(x) - z(x) * g(x) = q(x) * v(x)
     // f(x) = w + non_res * beta * x + omega
     // g(x) = w + beta * sigma + omega
@@ -243,15 +233,15 @@ where
     assert_eq!(omega_values.domain_size(), domain_size);
 
     partial_products_quotient_terms(
-        &partial_products,
-        &z_poly,
-        &variable_cols,
-        &permutation_cols,
-        &omega_values,
-        &powers_of_alpha,
-        &non_residues_by_beta,
-        &beta,
-        &gamma,
+        partial_products,
+        z_poly,
+        variable_cols,
+        permutation_cols,
+        omega_values,
+        powers_of_alpha,
+        non_residues_by_beta,
+        beta,
+        gamma,
         quotient,
         num_cols_per_product,
         num_polys,

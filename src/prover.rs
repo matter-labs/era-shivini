@@ -1,4 +1,5 @@
 use std::alloc::Global;
+use std::rc::Rc;
 
 use boojum::{
     config::ProvingCSConfig,
@@ -48,75 +49,165 @@ pub fn gpu_prove_from_external_witness_data<
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
 ) -> CudaResult<GpuProof<A>> {
-    assert_eq!(
-        cs.next_available_place_idx(),
-        0,
-        "CS should be a reusable cs (empty and holding no data)"
-    );
-    unsafe {
-        assert!(
-            _CUDA_CONTEXT.is_some(),
-            "prover context should be initialized"
-        )
-    };
-
-    let num_variable_cols = setup.variables_hint.len();
-    let num_witness_cols = setup.witnesses_hint.len();
-    let num_multiplicity_cols = cs.num_multipicities_polys();
-    let trace_layout = TraceLayout {
-        num_variable_cols,
-        num_witness_cols,
-        num_multiplicity_cols,
-    };
-    dbg!(&trace_layout);
-    let domain_size = cs.max_trace_len;
-    let start = std::time::Instant::now();
-    let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
-    let used_lde_degree = usize::max(quotient_degree, proof_config.fri_lde_factor);
-    let (raw_trace, monomial_trace, subtrees, trace_tree_cap) =
-        construct_trace_storage_from_remote_witness_data(
-            trace_layout.clone(),
-            used_lde_degree,
-            proof_config.fri_lde_factor,
-            domain_size,
-            setup,
-            &external_witness_data,
-            &cs.lookup_parameters,
-            worker,
-        )?;
-    synchronize_streams()?;
-    println!("on device variable assignment takes {:?}", start.elapsed());
-    let num_public_inputs = external_witness_data.public_inputs_locations.len();
-    // assert!(num_public_inputs > 0); // TODO
-    // external witness already knows both locations of public input and values of them
-    let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
-    for (col, row) in external_witness_data
-        .public_inputs_locations
-        .iter()
-        .cloned()
-    {
-        let variable_idx = setup.variables_hint[col][row].clone() as usize;
-        assert_eq!(
-            variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
-            0,
-            "placeholder found in a public input location"
-        );
-        let value = external_witness_data.all_values[variable_idx];
-        public_inputs_with_locations.push((col, row, value));
-    }
-    gpu_prove_from_trace::<_, TR, _, NoPow, _>(
+    let cache_strategy = CacheStrategy::get::<P, TR, H, POW, A>(
         cs,
-        raw_trace,
-        monomial_trace,
-        subtrees,
-        trace_tree_cap,
-        public_inputs_with_locations,
+        external_witness_data,
+        proof_config.clone(),
         setup,
+        vk,
+        transcript_params.clone(),
+        worker,
+    )?;
+    gpu_prove_from_external_witness_data_with_cache_strategy::<P, TR, H, POW, A>(
+        cs,
+        external_witness_data,
         proof_config,
+        setup,
         vk,
         transcript_params,
         worker,
+        cache_strategy,
     )
+}
+
+pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
+    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
+    TR: Transcript<F, CompatibleCap = [F; 4]>,
+    H: TreeHasher<F, Output = TR::CompatibleCap>,
+    POW: PoWRunner,
+    A: GoodAllocator,
+>(
+    // service layer reuses assembly for repeated proving, so that just borrow it
+    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    external_witness_data: &WitnessVec<F>, // TODO: read data from Assembly pinned storage
+    proof_config: ProofConfig,
+    setup: &GpuSetup<A>,
+    vk: &VerificationKey<F, H>,
+    transcript_params: TR::TransciptParameters,
+    worker: &Worker,
+    cache_strategy: CacheStrategy,
+) -> CudaResult<GpuProof<A>> {
+    let mut timer = std::time::Instant::now();
+    let result = {
+        assert_eq!(
+            cs.next_available_place_idx(),
+            0,
+            "CS should be empty and hold no data"
+        );
+        assert!(
+            is_prover_context_initialized(),
+            "prover context should be initialized"
+        );
+
+        let num_variable_cols = setup.variables_hint.len();
+        let num_witness_cols = setup.witnesses_hint.len();
+        let num_multiplicity_cols = cs.num_multipicities_polys();
+        let domain_size = cs.max_trace_len;
+        let fri_lde_degree = proof_config.fri_lde_factor;
+        let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+        let used_lde_degree = usize::max(quotient_degree, fri_lde_degree);
+        let cap_size = setup.setup_tree.cap_size;
+        let setup_cache = SetupCache::new_from_gpu_setup(
+            cache_strategy.setup,
+            setup,
+            fri_lde_degree,
+            used_lde_degree,
+        )?;
+        if !is_dry_run()? {
+            println!("◆ setup: {:?}", timer.elapsed());
+        }
+        timer = std::time::Instant::now();
+        let trace_layout = TraceLayout {
+            num_variable_cols,
+            num_witness_cols,
+            num_multiplicity_cols,
+        };
+        let mut trace_cache = TraceCache::new(
+            cache_strategy.trace,
+            trace_layout,
+            domain_size,
+            fri_lde_degree,
+            used_lde_degree,
+            cap_size,
+            (),
+        );
+        let arguments_layout = ArgumentsLayout::from_trace_layout_and_lookup_params(
+            trace_layout,
+            quotient_degree,
+            cs.lookup_parameters.clone(),
+        );
+        let mut arguments_cache = ArgumentsCache::new(
+            cache_strategy.arguments,
+            arguments_layout,
+            domain_size,
+            fri_lde_degree,
+            used_lde_degree,
+            cap_size,
+            (),
+        );
+        let trace_evaluations_storage = match trace_cache.strategy {
+            StorageCacheStrategy::CacheMonomials
+            | StorageCacheStrategy::CacheMonomialsAndFirstCoset
+            | StorageCacheStrategy::CacheMonomialsAndFriCosets => trace_cache.get_temp_storage(),
+            _ => trace_cache.get_evaluations_storage(),
+        };
+        let trace_evaluations = GenericTraceStorage::fill_from_remote_witness_data(
+            &setup_cache.aux.variable_indexes,
+            &setup_cache.aux.witness_indexes,
+            &external_witness_data,
+            &cs.lookup_parameters,
+            worker,
+            trace_evaluations_storage,
+        )?;
+        let trace_evaluations = Rc::new(trace_evaluations);
+        let trace_evaluations = match trace_cache.strategy {
+            StorageCacheStrategy::InPlace => {
+                trace_cache.initialize(trace_evaluations)?;
+                trace_cache.get_evaluations()?
+            }
+            _ => {
+                trace_cache.initialize(trace_evaluations.clone())?;
+                trace_evaluations
+            }
+        };
+        let setup_evaluations = setup_cache.get_evaluations()?;
+        let num_public_inputs = external_witness_data.public_inputs_locations.len();
+        // assert!(num_public_inputs > 0); // TODO
+        // external witness already knows both locations of public input and values of them
+        let mut public_inputs_with_locations = Vec::with_capacity(num_public_inputs);
+        for (col, row) in external_witness_data
+            .public_inputs_locations
+            .iter()
+            .cloned()
+        {
+            let variable_idx = setup.variables_hint[col][row].clone() as usize;
+            assert_eq!(
+                variable_idx & (PACKED_PLACEHOLDER_BITMASK as usize),
+                0,
+                "placeholder found in a public input location"
+            );
+            let value = external_witness_data.all_values[variable_idx];
+            public_inputs_with_locations.push((col, row, value));
+        }
+        gpu_prove_from_trace::<_, TR, _, NoPow, _>(
+            cs,
+            public_inputs_with_locations,
+            setup,
+            setup_cache,
+            setup_evaluations,
+            &mut trace_cache,
+            trace_evaluations,
+            &mut arguments_cache,
+            proof_config,
+            vk,
+            transcript_params,
+            worker,
+        )
+    };
+    if !is_dry_run()? {
+        println!("◆ proof: {:?}", timer.elapsed());
+    }
+    result
 }
 
 pub fn compute_quotient_degree<
@@ -165,12 +256,13 @@ fn gpu_prove_from_trace<
     A: GoodAllocator,
 >(
     cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
-    raw_trace: GenericTraceStorage<LagrangeBasis>,
-    monomial_trace: GenericTraceStorage<MonomialBasis>,
-    trace_subtrees: Vec<SubTree>,
-    trace_tree_cap: Vec<[F; 4]>,
     public_inputs_with_locations: Vec<(usize, usize, F)>,
     setup_base: &GpuSetup<A>,
+    setup_cache: &mut SetupCache,
+    setup_evaluations: Rc<GenericSetupStorage<LagrangeBasis>>,
+    trace_cache: &mut TraceCache,
+    trace_evaluations: Rc<GenericTraceStorage<LagrangeBasis>>,
+    arguments_cache: &mut ArgumentsCache,
     proof_config: ProofConfig,
     vk: &VerificationKey<F, H>,
     transcript_params: TR::TransciptParameters,
@@ -201,7 +293,7 @@ fn gpu_prove_from_trace<
 
     // cap size shouldn't be part of subtree
     // Immediately transfer raw trace to the device and simultaneously compute monomials of the whole trace
-    // Then compute coset evaluations + cap of the sub tree for each coset
+    // Then compute coset evaluations + cap of the subtree for each coset
     assert!(cap_size.is_power_of_two());
     assert!(fri_lde_degree.is_power_of_two());
     let _coset_cap_size = if cap_size < fri_lde_degree {
@@ -211,37 +303,43 @@ fn gpu_prove_from_trace<
         1 << (cap_size.trailing_zeros() - fri_lde_degree.trailing_zeros())
     };
 
-    let time = std::time::Instant::now();
-    let trace_layout = raw_trace.layout.clone();
+    let trace_layout = trace_evaluations.layout.clone();
     let TraceLayout {
         num_variable_cols,
         num_witness_cols: _,
         num_multiplicity_cols: _,
     } = trace_layout.clone();
-    let num_trace_polys = raw_trace.num_polys();
-    assert_eq!(monomial_trace.domain_size(), domain_size);
-    assert_eq!(monomial_trace.num_polys(), num_trace_polys);
-    assert_eq!(raw_trace.domain_size(), domain_size);
-
+    let num_trace_polys = trace_evaluations.num_polys();
+    assert_eq!(trace_evaluations.domain_size(), domain_size);
+    let mut tree_holder = TreeCache::empty(fri_lde_degree);
+    let (trace_subtrees, trace_tree_cap) = trace_cache.get_commitment::<H>(cap_size)?;
     assert_eq!(trace_subtrees.len(), proof_config.fri_lde_factor);
     assert_eq!(trace_tree_cap.len(), proof_config.merkle_tree_cap_size);
-    let mut trace_holder =
-        TraceCache::from_monomial(monomial_trace, fri_lde_degree, used_lde_degree)?;
-    let mut tree_holder = TreeCache::empty(fri_lde_degree);
     tree_holder.set_trace_subtrees(trace_subtrees);
     // TODO: use cuda callback for transcript
     transcript.witness_merkle_tree_cap(&trace_tree_cap);
 
-    let h_beta = transcript.get_multiple_challenges_fixed::<2>();
+    let h_beta = if is_dry_run()? {
+        [F::ZERO; 2]
+    } else {
+        transcript.get_multiple_challenges_fixed::<2>()
+    };
     let h_beta = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_beta);
-    let h_gamma = transcript.get_multiple_challenges_fixed::<2>();
+    let h_gamma = if is_dry_run()? {
+        [F::ZERO; 2]
+    } else {
+        transcript.get_multiple_challenges_fixed::<2>()
+    };
     let h_gamma = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_gamma);
 
     let beta = h_beta.into();
     let gamma = h_gamma.into();
 
-    let non_residues =
-        non_residues_for_copy_permutation::<F, Global>(domain_size, num_variable_cols);
+    let non_residues = if is_dry_run()? {
+        vec![F::ZERO; num_variable_cols]
+    } else {
+        non_residues_for_copy_permutation::<F, Global>(domain_size, num_variable_cols)
+    };
 
     let mut h_non_residues_by_beta = vec![];
     for non_residue in non_residues.iter() {
@@ -249,19 +347,12 @@ fn gpu_prove_from_trace<
         non_residue_by_beta.mul_assign_by_base(non_residue);
         h_non_residues_by_beta.push(non_residue_by_beta);
     }
-    let mut non_residues_by_beta = dvec!(h_non_residues_by_beta.len());
+    let mut non_residues_by_beta = svec!(h_non_residues_by_beta.len());
     non_residues_by_beta.copy_from_slice(&h_non_residues_by_beta)?;
 
-    let raw_setup = GenericSetupStorage::from_gpu_setup(&setup_base)?;
-    let arguments_layout = ArgumentsLayout::from_trace_layout_and_lookup_params(
-        raw_trace.layout.clone(),
-        quotient_degree,
-        cs.lookup_parameters.clone(),
-    );
-    let mut argument_raw_storage = GenericArgumentStorage::allocate(arguments_layout, domain_size)?;
-    let raw_trace_polynomials = raw_trace.as_polynomials();
-    let raw_setup_polynomials = raw_setup.as_polynomials();
-
+    let raw_trace_polynomials = trace_evaluations.as_polynomials();
+    let raw_setup_polynomials = setup_evaluations.as_polynomials();
+    let mut argument_raw_storage = unsafe { arguments_cache.get_evaluations_storage().transmute() };
     compute_partial_products(
         &raw_trace_polynomials,
         &raw_setup_polynomials,
@@ -278,9 +369,17 @@ fn gpu_prove_from_trace<
     let (lookup_beta, powers_of_gamma_for_lookup) = if cs.lookup_parameters
         != LookupParameters::NoLookup
     {
-        let h_lookup_beta = transcript.get_multiple_challenges_fixed::<2>();
+        let h_lookup_beta = if is_dry_run()? {
+            [F::ZERO; 2]
+        } else {
+            transcript.get_multiple_challenges_fixed::<2>()
+        };
         let h_lookup_beta = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_lookup_beta);
-        let h_lookup_gamma = transcript.get_multiple_challenges_fixed::<2>();
+        let h_lookup_gamma = if is_dry_run()? {
+            [F::ZERO; 2]
+        } else {
+            transcript.get_multiple_challenges_fixed::<2>()
+        };
         let h_lookup_gamma = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_lookup_gamma);
         let lookup_beta: DExt = h_lookup_beta.into();
         let _lookup_gamma: DExt = h_lookup_gamma.into();
@@ -309,7 +408,7 @@ fn gpu_prove_from_trace<
                     // Should this be h_gamma or h_lookup_gamma?
                     current.mul_assign(&h_lookup_gamma);
                 }
-                let mut powers_of_gamma = dvec!(h_powers_of_gamma.len());
+                let mut powers_of_gamma = svec!(h_powers_of_gamma.len());
                 powers_of_gamma.copy_from_slice(&h_powers_of_gamma)?;
 
                 // compute_lookup_argument_over_general_purpose_cols(
@@ -359,7 +458,7 @@ fn gpu_prove_from_trace<
                     h_powers_of_gamma.push(current.into());
                     current.mul_assign(&h_lookup_gamma);
                 }
-                let mut powers_of_gamma = dvec!(h_powers_of_gamma.len());
+                let mut powers_of_gamma = svec!(h_powers_of_gamma.len());
                 powers_of_gamma.copy_from_slice(&h_powers_of_gamma)?;
 
                 compute_lookup_argument_over_specialized_cols(
@@ -381,16 +480,19 @@ fn gpu_prove_from_trace<
     } else {
         (None, None)
     };
-    drop(raw_trace);
-    let argument_monomial_storage = argument_raw_storage.into_monomial()?;
-    let mut argument_holder =
-        ArgumentCache::from_monomial(argument_monomial_storage, fri_lde_degree, used_lde_degree)?;
-    let (argument_subtrees, argument_tree_cap) = argument_holder.commit::<H>(cap_size)?;
+    drop(setup_evaluations);
+    drop(trace_evaluations);
+    arguments_cache.initialize(Rc::new(argument_raw_storage))?;
+    let (argument_subtrees, argument_tree_cap) = arguments_cache.get_commitment::<H>(cap_size)?;
 
     transcript.witness_merkle_tree_cap(&argument_tree_cap);
     tree_holder.set_argument_subtrees(argument_subtrees);
 
-    let h_alpha = transcript.get_multiple_challenges_fixed::<2>();
+    let h_alpha = if is_dry_run()? {
+        [F::ZERO; 2]
+    } else {
+        transcript.get_multiple_challenges_fixed::<2>()
+    };
     let h_alpha = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_alpha);
     let _alpha: DExt = h_alpha.into();
 
@@ -446,7 +548,7 @@ fn gpu_prove_from_trace<
     let (take, rest) = rest.split_at(total_num_lookup_argument_terms);
     let pregenerated_challenges_for_lookup = if total_num_lookup_argument_terms > 0 {
         let h_vec = take.to_vec();
-        let mut d_vec = dvec!(h_vec.len());
+        let mut d_vec = svec!(h_vec.len());
         d_vec.copy_from_slice(&h_vec)?;
         Some(d_vec)
     } else {
@@ -460,40 +562,30 @@ fn gpu_prove_from_trace<
     let copy_permutation_challenge_z_at_one_equals_one = take.to_vec();
     assert!(rest.len() > 0);
     let h_vec = rest.to_vec();
-    let mut copy_permutation_challenges_partial_product_terms = dvec!(h_vec.len());
+    let mut copy_permutation_challenges_partial_product_terms = svec!(h_vec.len());
     // TODO: When we use host pinned memory for challenges, we need to make sure
     // asynchronous H2D copies complete before h_vec gets dropped.
     copy_permutation_challenges_partial_product_terms.copy_from_slice(&h_vec)?;
 
     let mut quotient = ComplexPoly::<LDE>::empty(quotient_degree * domain_size)?;
-    let base_monomial_setup = raw_setup.into_monomials()?;
-    let mut setup_holder =
-        SetupCache::from_monomial(base_monomial_setup, fri_lde_degree, used_lde_degree)?;
 
     let variables_offset = cs.parameters.num_columns_under_copy_permutation;
 
-    let general_purpose_gates = constraint_evaluation::get_evaluators_of_general_purpose_cols(
-        &cs,
-        &setup_base.selectors_placement,
-    );
+    let general_purpose_gates =
+        get_evaluators_of_general_purpose_cols(&cs, &setup_base.selectors_placement);
 
-    let specialized_gates = constraint_evaluation::get_specialized_evaluators_from_assembly(
-        &cs,
-        &setup_base.selectors_placement,
-    );
+    let specialized_gates =
+        get_specialized_evaluators_from_assembly(&cs, &setup_base.selectors_placement);
     let num_cols_per_product = quotient_degree;
     let specialized_cols_challenge_power_offset = total_num_lookup_argument_terms;
     let general_purpose_cols_challenge_power_offset =
         total_num_lookup_argument_terms + total_num_gate_terms_for_specialized_columns;
     for coset_idx in 0..quotient_degree {
         let mut coset_values = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
-        let trace_coset_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
-        let setup_coset_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
-        let argument_coset_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;
         compute_quotient_by_coset(
-            &trace_coset_values,
-            &setup_coset_values,
-            &argument_coset_values,
+            trace_cache,
+            setup_cache,
+            arguments_cache,
             cs.lookup_parameters,
             &setup_base.table_ids_column_idxes,
             &setup_base.selectors_placement,
@@ -546,20 +638,24 @@ fn gpu_prove_from_trace<
     tree_holder.set_quotient_subtrees(quotient_subtrees);
 
     // deep part
-    let h_z = transcript.get_multiple_challenges_fixed::<2>();
+    let h_z = if is_dry_run()? {
+        [F::ZERO; 2]
+    } else {
+        transcript.get_multiple_challenges_fixed::<2>()
+    };
     let h_z = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_z);
 
     let mut h_z_omega = h_z;
     h_z_omega.mul_assign_by_base(&domain_generator_for_size::<F>(domain_size as u64));
 
-    let num_setup_polys = setup_holder.num_polys();
-    let num_argument_polys = argument_holder.num_polys();
+    let num_setup_polys = setup_cache.num_polys();
+    let num_argument_polys = arguments_cache.num_polys() / 2;
 
     let (h_evaluations_at_z, h_evaluations_at_z_omega, h_evaluations_at_zero) = {
         compute_evaluations_over_lagrange_basis(
-            &mut trace_holder,
-            &mut setup_holder,
-            &mut argument_holder,
+            trace_cache,
+            setup_cache,
+            arguments_cache,
             &mut quotient_holder,
             h_z.clone(),
             h_z_omega.clone(),
@@ -571,21 +667,21 @@ fn gpu_prove_from_trace<
         h_evaluations_at_z.len(),
         num_trace_polys + num_setup_polys + num_argument_polys + num_quotient_polys
     );
-    let mut evaluations_at_z = dvec!(h_evaluations_at_z.len());
+    let mut evaluations_at_z = svec!(h_evaluations_at_z.len());
     evaluations_at_z.copy_from_slice(&h_evaluations_at_z)?;
     for h_point in h_evaluations_at_z.clone().into_iter() {
         transcript.witness_field_elements(h_point.as_coeffs_in_base());
     }
 
     assert_eq!(h_evaluations_at_z_omega.len(), 1);
-    let mut evaluations_at_z_omega = dvec!(h_evaluations_at_z_omega.len());
+    let mut evaluations_at_z_omega = svec!(h_evaluations_at_z_omega.len());
     evaluations_at_z_omega.copy_from_slice(&h_evaluations_at_z_omega)?;
     for h_point in h_evaluations_at_z_omega.clone().into_iter() {
         transcript.witness_field_elements(h_point.as_coeffs_in_base());
     }
 
     let evaluations_at_zero = if h_evaluations_at_zero.len() > 0 {
-        let mut d_vec = dvec!(h_evaluations_at_zero.len());
+        let mut d_vec = svec!(h_evaluations_at_zero.len());
         d_vec.copy_from_slice(&h_evaluations_at_zero)?;
         Some(d_vec)
     } else {
@@ -620,23 +716,30 @@ fn gpu_prove_from_trace<
     for (_, subset) in public_input_opening_tuples.iter() {
         total_num_challenges += subset.len();
     }
-
-    let c0 = transcript.get_challenge();
-    let c1 = transcript.get_challenge();
+    let c0 = if is_dry_run()? {
+        F::ZERO
+    } else {
+        transcript.get_challenge()
+    };
+    let c1 = if is_dry_run()? {
+        F::ZERO
+    } else {
+        transcript.get_challenge()
+    };
     let h_challenge = ExtensionField::<F, 2, EXT>::from_coeff_in_base([c0, c1]);
     let h_challenges: Vec<_, Global> = materialize_powers_serial(h_challenge, total_num_challenges);
-    let mut challenges = dvec!(h_challenges.len());
+    let mut challenges = svec!(h_challenges.len());
     challenges.copy_from_slice(&h_challenges)?;
 
     let mut deep_quotient = ComplexPoly::<LDE>::empty(fri_lde_degree * domain_size)?;
     let z = h_z.clone().into();
     let z_omega = h_z_omega.clone().into();
     for coset_idx in 0..fri_lde_degree {
-        let trace_values = trace_holder.get_or_compute_coset_evals(coset_idx)?;
+        let trace_values = trace_cache.get_coset_evaluations(coset_idx)?;
         let trace_polys = trace_values.as_polynomials();
-        let setup_values = setup_holder.get_or_compute_coset_evals(coset_idx)?;
+        let setup_values = setup_cache.get_coset_evaluations(coset_idx)?;
         let setup_polys = setup_values.as_polynomials();
-        let argument_values = argument_holder.get_or_compute_coset_evals(coset_idx)?;
+        let argument_values = arguments_cache.get_coset_evaluations(coset_idx)?;
         let argument_polys = argument_values.as_polynomials();
         let quotient_polys = quotient_holder.get_or_compute_coset_evals(coset_idx)?;
 
@@ -695,7 +798,6 @@ fn gpu_prove_from_trace<
         let storage = DVec::from_raw_parts_in(ptr, 2 * len, 2 * cap, allocator);
         CodeWord::new_base_assuming_adjacent(storage, fri_lde_degree)
     };
-    dbg!(first_codeword.length());
 
     let (mut fri_holder, final_fri_monomials) = compute_fri::<_, A>(
         first_codeword,
@@ -717,7 +819,11 @@ fn gpu_prove_from_trace<
         if num_challenges % F::CHAR_BITS != 0 {
             num_challenges += 1;
         }
-        let challenges = transcript.get_multiple_challenges(num_challenges);
+        let challenges = if is_dry_run()? {
+            vec![F::ZERO; num_challenges]
+        } else {
+            transcript.get_multiple_challenges(num_challenges)
+        };
         let pow_challenge = POW::run_from_field_elements(challenges, new_pow_bits, worker);
 
         assert!(F::CAPACITY_BITS >= 32);
@@ -747,7 +853,11 @@ fn gpu_prove_from_trace<
     let mut query_details_for_cosets = vec![vec![]; fri_lde_degree];
     let mut query_idx_and_coset_idx_map = vec![0usize; num_queries];
     for query_idx in 0..num_queries {
-        let query_index_lsb_first_bits = bools_buffer.get_bits(&mut transcript, max_needed_bits);
+        let query_index_lsb_first_bits = if is_dry_run()? {
+            vec![(query_idx & 1) == 1; max_needed_bits]
+        } else {
+            bools_buffer.get_bits(&mut transcript, max_needed_bits)
+        };
         // we consider it to be some convenient for us encoding of coset + inner index.
 
         let inner_idx =
@@ -780,9 +890,9 @@ fn gpu_prove_from_trace<
 
     let mut gpu_proof = GpuProof::<A>::allocate(
         trace_layout.num_polys(),
-        setup_holder.num_polys(),
+        setup_cache.num_polys(),
         // num polys is double here because argument and quotient polys have their elements in the extension field
-        argument_holder.num_polys_in_base(),
+        arguments_cache.num_polys(),
         quotient_holder.num_polys_in_base(),
         domain_size,
         proof_config,
@@ -799,31 +909,31 @@ fn gpu_prove_from_trace<
     );
 
     // TODO: consider to do setup query on the host
-    let (setup_subtrees, setup_tree_cap) = setup_holder.commit::<H>(cap_size)?;
-    assert_eq!(setup_base.setup_tree.get_cap(), setup_tree_cap);
+    let (setup_subtrees, setup_tree_cap) = setup_cache.get_commitment::<H>(cap_size)?;
+    if !is_dry_run()? {
+        assert_eq!(setup_base.setup_tree.get_cap(), setup_tree_cap);
+    }
     tree_holder.setup_setup_subtrees(setup_subtrees);
     // tree_holder.set_setup_tree_from_host_data(&setup_base.setup_tree);
 
     for (coset_idx, indexes_for_coset) in d_query_details.iter().enumerate() {
         let num_queries_for_coset = indexes_for_coset.len();
-        trace_holder.batch_query_for_coset::<H, A>(
+        trace_cache.batch_query_for_coset::<H, A>(
             coset_idx,
             indexes_for_coset,
             num_queries_for_coset,
             domain_size,
             &mut gpu_proof.witness_all_leaf_elems[coset_idx],
             &mut gpu_proof.witness_all_proofs[coset_idx],
-            &tree_holder,
         )?;
 
-        argument_holder.batch_query_for_coset::<H, A>(
+        arguments_cache.batch_query_for_coset::<H, A>(
             coset_idx,
             &indexes_for_coset,
             num_queries_for_coset,
             domain_size,
             &mut gpu_proof.stage_2_all_leaf_elems[coset_idx],
             &mut gpu_proof.stage_2_all_proofs[coset_idx],
-            &tree_holder,
         )?;
 
         quotient_holder.batch_query_for_coset::<H, A>(
@@ -836,14 +946,13 @@ fn gpu_prove_from_trace<
             &tree_holder,
         )?;
 
-        setup_holder.batch_query::<H, A>(
+        setup_cache.batch_query_for_coset::<H, A>(
             coset_idx,
             &indexes_for_coset,
             num_queries_for_coset,
             domain_size,
             &mut gpu_proof.setup_all_leaf_elems[coset_idx],
             &mut gpu_proof.setup_all_proofs[coset_idx],
-            &tree_holder,
         )?;
     }
     // FIXME: query FRI oracles
@@ -874,17 +983,14 @@ fn gpu_prove_from_trace<
     }
 
     synchronize_streams()?;
-    println!("FRI Queries are done {:?}", time.elapsed());
-    #[cfg(feature = "allocator_stats")]
-    unsafe {
-        _DEVICE_ALLOCATOR
-            .as_ref()
-            .unwrap()
-            .stats
-            .lock()
-            .unwrap()
-            .print(true, true);
-    }
+    // #[cfg(feature = "allocator_stats")]
+    // {
+    //     let mut guard = _alloc().stats.lock().unwrap();
+    //     guard
+    //         .allocations_at_maximum_block_count_at_maximum_tail_index
+    //         .print(false, false);
+    //     guard.reset();
+    // }
 
     gpu_proof.public_inputs = public_inputs;
     gpu_proof.witness_oracle_cap = trace_tree_cap;
@@ -1249,15 +1355,15 @@ impl<A: GoodAllocator> Into<Proof<F, DefaultTreeHasher, EXT>> for GpuProof<A> {
 
         let proof = Proof::<F, DefaultTreeHasher, EXT> {
             public_inputs: public_inputs.clone(),
-            witness_oracle_cap: witness_oracle_cap,
-            stage_2_oracle_cap: stage_2_oracle_cap,
-            quotient_oracle_cap: quotient_oracle_cap,
+            witness_oracle_cap,
+            stage_2_oracle_cap,
+            quotient_oracle_cap,
             final_fri_monomials,
             values_at_z: values_at_z.to_vec(),
             values_at_z_omega: values_at_z_omega.to_vec(),
             values_at_0: values_at_z_zero.to_vec(),
             pow_challenge,
-            fri_base_oracle_cap: fri_base_oracle_cap,
+            fri_base_oracle_cap,
             fri_intermediate_oracles_caps,
             queries_per_fri_repetition,
 
@@ -1372,7 +1478,7 @@ pub(crate) fn u64_from_lsb_first_bits(bits: &[bool]) -> u64 {
 pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
     trace_holder: &mut TraceCache,
     setup_holder: &mut SetupCache,
-    argument_holder: &mut ArgumentCache<'a>,
+    argument_holder: &mut ArgumentsCache,
     quotient_holder: &mut QuotientCache<'a>,
     z: EF,
     z_omega: EF,
@@ -1382,27 +1488,30 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
     // additionally, copy permutation polynomial should be opened at "z*w"
     // lookup polynomials should be opened at "0"
     // we should follow order of the evaluations as in the reference impl
-    let trace_storage = trace_holder.get_or_compute_coset_evals(0)?;
-    let setup_storage = setup_holder.get_or_compute_coset_evals(0)?;
-    let domain_size = trace_storage.domain_size();
+    let domain_size = setup_holder.domain_size;
     let precomputed_bases_for_z = PrecomputedBasisForBarycentric::precompute(domain_size, z)?;
-
-    let trace_evals_at_z = trace_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?;
-    let setup_evals_at_z = setup_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?;
-
-    let quotient_storage = quotient_holder.get_or_compute_coset_evals(0)?;
-    let quotient_evals_at_z = quotient_storage.barycentric_evaluate(&precomputed_bases_for_z)?;
+    let trace_evals_at_z = {
+        let trace_storage = trace_holder.get_coset_evaluations(0)?;
+        trace_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?
+    };
+    let setup_evals_at_z = {
+        let setup_storage = setup_holder.get_coset_evaluations(0)?;
+        setup_storage.barycentric_evaluate::<A>(&precomputed_bases_for_z)?
+    };
+    let quotient_evals_at_z = {
+        let quotient_storage = quotient_holder.get_or_compute_coset_evals(0)?;
+        quotient_storage.barycentric_evaluate(&precomputed_bases_for_z)?
+    };
 
     // We can evaluate those polys cheaper but use barycentric for now
     let precomputed_bases_for_zero =
         PrecomputedBasisForBarycentric::precompute(domain_size, EF::ZERO)?;
 
     // evaluate z(x) at z_omega direcly in monomial
-    let z_at_z_omega = argument_holder
-        .get_z_monomial()
+    let z_at_z_omega = argument_holder.get_monomials()?.as_polynomials().z_polys[0]
         .evaluate_at_ext(&z_omega.into())?;
-    let argument_storage = argument_holder.get_or_compute_coset_evals(0)?;
-    let ArgumentPolynomials {
+    let argument_storage = argument_holder.get_coset_evaluations(0)?;
+    let ArgumentsPolynomials {
         partial_products,
         lookup_a_polys,
         lookup_b_polys,
@@ -1412,7 +1521,7 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
 
     let lookup_evals_at_zero = if lookup_a_polys.len() > 0 {
         assert_eq!(lookup_b_polys.len(), 1);
-        assert_multiset_adjacent_ext(&[lookup_a_polys, lookup_b_polys]);
+        assert_multiset_adjacent_ext(&[&lookup_a_polys, &lookup_b_polys]);
         let num_lookup_polys = lookup_a_polys.len() + lookup_b_polys.len();
         let lookup_polys = unsafe {
             let len = 2 * domain_size * num_lookup_polys;
@@ -1432,7 +1541,7 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         num_variable_cols,
         num_witness_cols,
         num_multiplicity_cols,
-    } = trace_storage.layout.clone();
+    } = trace_holder.layout;
     assert_eq!(
         trace_evals_at_z.len(),
         num_variable_cols + num_witness_cols + num_multiplicity_cols
@@ -1441,14 +1550,14 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         num_permutation_cols,
         num_constant_cols,
         num_table_cols,
-    } = setup_storage.layout.clone();
+    } = setup_holder.layout;
     assert_eq!(
         setup_evals_at_z.len(),
         num_permutation_cols + num_constant_cols + num_table_cols
     );
     let num_partial_product_poyls = partial_products.len();
     let _num_lookup_polys = lookup_a_polys.len() + lookup_b_polys.len();
-    assert_eq!(argument_evals_at_z.len(), argument_holder.num_polys());
+    assert_eq!(argument_evals_at_z.len(), argument_holder.num_polys() / 2);
     // decompose storage into sub polynomials
     let mut trace_evals_at_z_iter = trace_evals_at_z;
     let variable_evals_at_z: Vec<EF> = trace_evals_at_z_iter.drain(0..num_variable_cols).collect();
@@ -1469,15 +1578,16 @@ pub fn compute_evaluations_over_lagrange_basis<'a, A: GoodAllocator>(
         argument_evals_at_z.split_at(1 + num_partial_product_poyls);
     let _num_trace_polys = trace_holder.num_polys();
     let _num_setup_polys = setup_holder.num_polys();
-    let _num_argument_polys = argument_holder.num_polys();
+    let _num_argument_polys = argument_holder.num_polys() / 2;
     let _num_quotient_polys = quotient_holder.num_polys();
     let num_all_polys_at_z = trace_holder.num_polys()
         + setup_holder.num_polys()
-        + argument_holder.num_polys()
+        + argument_holder.num_polys() / 2
         + quotient_holder.num_polys();
     let mut polynomials_at_z = Vec::with_capacity_in(num_all_polys_at_z, A::default());
     let mut polynomials_at_z_omega = Vec::with_capacity_in(1, A::default());
-    let mut polynomials_at_zero = Vec::with_capacity_in(argument_holder.num_polys(), A::default());
+    let mut polynomials_at_zero =
+        Vec::with_capacity_in(argument_holder.num_polys() / 2, A::default());
 
     polynomials_at_z.extend_from_slice(&variable_evals_at_z);
     polynomials_at_z.extend_from_slice(&witness_evals_at_z);
@@ -1525,17 +1635,17 @@ pub fn compute_denom_at_ext_point<'a>(
 fn compute_deep_quotiening_over_coset(
     trace_polys: &TracePolynomials<CosetEvaluations>,
     setup_polys: &SetupPolynomials<CosetEvaluations>,
-    argument_polys: &ArgumentPolynomials<CosetEvaluations>,
+    argument_polys: &ArgumentsPolynomials<CosetEvaluations>,
     quotient_poly_constraints: &GenericComplexPolynomialStorage<CosetEvaluations>,
     roots: Poly<CosetEvaluations>,
     _coset_idx: usize,
-    evaluations_at_z: &DVec<EF>,
-    evaluations_at_z_omega: &DVec<EF>,
-    evaluations_at_zero: &Option<DVec<EF>>,
+    evaluations_at_z: &SVec<EF>,
+    evaluations_at_z_omega: &SVec<EF>,
+    evaluations_at_zero: &Option<SVec<EF>>,
     z: &DExt,
     z_omega: &DExt,
     public_input_opening_tuples: &[(F, Vec<(usize, F)>)],
-    challenges: &DVec<EF>,
+    challenges: &SVec<EF>,
 ) -> CudaResult<ComplexPoly<'static, CosetEvaluations>> {
     let domain_size = trace_polys.variable_cols[0].domain_size();
     let mut quotient = ComplexPoly::<CosetEvaluations>::empty(domain_size)?;
@@ -1552,8 +1662,8 @@ fn compute_deep_quotiening_over_coset(
     ) = if argument_polys.lookup_a_polys.len() > 0 {
         (
             Some(&trace_polys.multiplicity_cols),
-            Some(argument_polys.lookup_a_polys),
-            Some(argument_polys.lookup_b_polys),
+            Some(argument_polys.lookup_a_polys.as_slice()),
+            Some(argument_polys.lookup_b_polys.as_slice()),
             Some(&setup_polys.table_cols),
             Some(compute_denom_at_base_point(&roots, &DF::zero()?)?),
         )
@@ -1577,7 +1687,7 @@ fn compute_deep_quotiening_over_coset(
         &maybe_witness_cols,
         &setup_polys.constant_cols,
         &setup_polys.permutation_cols,
-        &argument_polys.z_poly,
+        &argument_polys.z_polys[0],
         &argument_polys.partial_products,
         &maybe_multiplicity_cols,
         &maybe_lookup_a_polys,

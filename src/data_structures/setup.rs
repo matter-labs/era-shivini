@@ -1,15 +1,23 @@
-use boojum::cs::{
-    implementations::{polynomial_storage::SetupBaseStorage, proof::OracleQuery},
-    oracle::TreeHasher,
-};
-use std::ops::Deref;
-use std::rc::Rc;
+use boojum::cs::{implementations::polynomial_storage::SetupBaseStorage, oracle::TreeHasher};
+use std::ops::Range;
 
-use crate::cs::{materialize_permutation_cols_from_transformed_hints_into, GpuSetup};
+use crate::cs::{
+    materialize_permutation_cols_from_indexes_into, GpuSetup, PACKED_PLACEHOLDER_BITMASK,
+};
+use crate::data_structures::cache::{StorageCache, StorageCacheStrategy};
+use crate::primitives::helpers::set_by_value;
 
 use super::*;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SetupPolyType {
+    Permutation,
+    Constant,
+    Table,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SetupLayout {
     pub num_permutation_cols: usize,
     pub num_constant_cols: usize,
@@ -18,8 +26,8 @@ pub struct SetupLayout {
 
 impl SetupLayout {
     pub fn from_setup<A: GoodAllocator>(setup: &GpuSetup<A>) -> Self {
-        assert!(setup.variables_hint.len() > 0);
-        assert!(setup.constant_columns.len() > 0);
+        assert!(!setup.variables_hint.is_empty());
+        assert!(!setup.constant_columns.is_empty());
         Self {
             num_permutation_cols: setup.variables_hint.len(),
             num_constant_cols: setup.constant_columns.len(),
@@ -32,8 +40,8 @@ impl SetupLayout {
     >(
         base_setup: &SetupBaseStorage<F, P, Global, Global>,
     ) -> Self {
-        assert!(base_setup.copy_permutation_polys.len() > 0);
-        assert!(base_setup.constant_columns.len() > 0);
+        assert!(!base_setup.copy_permutation_polys.is_empty());
+        assert!(!base_setup.constant_columns.is_empty());
         Self {
             num_permutation_cols: base_setup.copy_permutation_polys.len(),
             num_constant_cols: base_setup.constant_columns.len(),
@@ -46,38 +54,54 @@ impl SetupLayout {
     }
 }
 
-pub struct GenericSetupStorage<P: PolyForm> {
-    pub storage: GenericStorage,
-    pub layout: SetupLayout,
-    #[allow(dead_code)]
-    coset_idx: Option<usize>,
-    form: std::marker::PhantomData<P>,
+impl GenericStorageLayout for SetupLayout {
+    type PolyType = SetupPolyType;
+
+    fn num_polys(&self) -> usize {
+        self.num_polys()
+    }
+
+    fn poly_range(&self, poly_type: Self::PolyType) -> (Range<usize>, Self) {
+        let start = match poly_type {
+            SetupPolyType::Permutation => 0,
+            SetupPolyType::Constant => self.num_permutation_cols,
+            SetupPolyType::Table => self.num_permutation_cols + self.num_constant_cols,
+        };
+        let len = match poly_type {
+            SetupPolyType::Permutation => self.num_permutation_cols,
+            SetupPolyType::Constant => self.num_constant_cols,
+            SetupPolyType::Table => self.num_table_cols,
+        };
+        let range = start..start + len;
+        let layout = Self {
+            num_permutation_cols: match poly_type {
+                SetupPolyType::Permutation => len,
+                _ => 0,
+            },
+            num_constant_cols: match poly_type {
+                SetupPolyType::Constant => len,
+                _ => 0,
+            },
+            num_table_cols: match poly_type {
+                SetupPolyType::Table => len,
+                _ => 0,
+            },
+        };
+        (range, layout)
+    }
 }
 
+pub type GenericSetupStorage<P> = GenericStorage<P, SetupLayout>;
+
 impl<P: PolyForm> GenericSetupStorage<P> {
-    pub fn num_polys(&self) -> usize {
-        self.layout.num_polys()
-    }
-
-    pub fn domain_size(&self) -> usize {
-        self.storage.domain_size()
-    }
-
-    pub fn as_polynomials<'a>(&'a self) -> SetupPolynomials<'a, P> {
-        let GenericSetupStorage {
-            storage,
-            layout,
-            coset_idx: _,
-            form: _,
-        } = self;
-
+    pub fn as_polynomials(&self) -> SetupPolynomials<P> {
         let SetupLayout {
             num_permutation_cols,
             num_constant_cols,
             num_table_cols,
-        } = *layout;
+        } = self.layout;
 
-        let all_polys = storage.as_poly_storage();
+        let all_polys = self.as_polys();
         let mut all_polys_iter = all_polys.into_iter();
 
         let mut permutation_cols = vec![];
@@ -101,67 +125,6 @@ impl<P: PolyForm> GenericSetupStorage<P> {
             constant_cols,
             table_cols,
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn clone(&self) -> CudaResult<Self> {
-        let num_polys = self.num_polys();
-        let domain_size = self.domain_size();
-        let src = self.as_single_slice();
-
-        let mut storage = GenericStorage::allocate(num_polys, domain_size)?;
-        let dst = storage.as_single_slice_mut();
-        mem::d2d(src, dst)?;
-
-        Ok(Self {
-            storage,
-            layout: self.layout.clone(),
-            coset_idx: self.coset_idx.clone(),
-            form: std::marker::PhantomData,
-        })
-    }
-
-    pub fn allocate(layout: SetupLayout, domain_size: usize) -> CudaResult<Self> {
-        let storage = GenericStorage::allocate(layout.num_polys(), domain_size)?;
-        Ok(Self {
-            storage,
-            layout,
-            coset_idx: None,
-            form: std::marker::PhantomData,
-        })
-    }
-}
-
-impl<P: PolyForm> AsSingleSlice for GenericSetupStorage<P> {
-    fn as_single_slice(&self) -> &[F] {
-        self.storage.as_single_slice()
-    }
-
-    fn as_single_slice_mut(&mut self) -> &mut [F] {
-        self.storage.as_single_slice_mut()
-    }
-
-    fn domain_size(&self) -> usize {
-        self.storage.domain_size
-    }
-
-    fn num_polys(&self) -> usize {
-        assert_eq!(self.storage.num_polys, self.layout.num_polys());
-        self.layout.num_polys()
-    }
-}
-impl<P: PolyForm> AsSingleSlice for &GenericSetupStorage<P> {
-    fn as_single_slice(&self) -> &[F] {
-        self.storage.as_single_slice()
-    }
-
-    fn domain_size(&self) -> usize {
-        self.storage.domain_size
-    }
-
-    fn num_polys(&self) -> usize {
-        assert_eq!(self.storage.num_polys, self.layout.num_polys());
-        self.layout.num_polys()
     }
 }
 
@@ -202,26 +165,23 @@ pub struct SetupPolynomials<'a, P: PolyForm> {
 }
 
 impl GenericSetupStorage<LagrangeBasis> {
-    pub fn from_gpu_setup<A: GoodAllocator>(
+    pub fn fill_from_gpu_setup<A: GoodAllocator>(
         setup: &GpuSetup<A>,
-    ) -> CudaResult<GenericSetupStorage<LagrangeBasis>> {
+        variable_indexes: &DVec<u32>,
+        mut storage: GenericSetupStorage<Undefined>,
+    ) -> CudaResult<Self> {
         let GpuSetup {
             constant_columns,
             lookup_tables_columns,
             variables_hint,
-            layout,
             ..
         } = setup;
-
-        let domain_size = constant_columns[0].len();
+        let domain_size = storage.domain_size();
         assert!(domain_size.is_power_of_two());
         for col in constant_columns.iter().chain(lookup_tables_columns.iter()) {
             assert_eq!(col.len(), domain_size);
         }
-
         let num_copy_permutation_polys = variables_hint.len();
-        let mut storage = GenericSetupStorage::allocate(layout.clone(), domain_size)?;
-
         let size_of_all_copy_perm_polys = num_copy_permutation_polys * domain_size;
         let (copy_permutation_storage, remaining_polys) = storage
             .as_single_slice_mut()
@@ -230,23 +190,43 @@ impl GenericSetupStorage<LagrangeBasis> {
             remaining_polys.len(),
             (constant_columns.len() + lookup_tables_columns.len()) * domain_size
         );
-        materialize_permutation_cols_from_transformed_hints_into(
+        materialize_permutation_cols_from_indexes_into(
             copy_permutation_storage,
-            variables_hint,
+            variable_indexes,
+            num_copy_permutation_polys,
             domain_size,
         )?;
-
         for (dst, src) in remaining_polys
             .chunks_mut(domain_size)
             .zip(constant_columns.iter().chain(lookup_tables_columns.iter()))
         {
             mem::h2d(src, dst)?;
         }
-
-        Ok(storage)
+        let result = unsafe { storage.transmute() };
+        Ok(result)
     }
 
-    #[allow(dead_code)]
+    pub fn create_from_gpu_setup<A: GoodAllocator>(
+        setup: &GpuSetup<A>,
+        variable_indexes: &DVec<u32>,
+    ) -> CudaResult<Self> {
+        let layout = setup.layout.clone();
+        let domain_size = setup.constant_columns[0].len();
+        let storage = GenericSetupStorage::allocate(layout, domain_size);
+        Self::fill_from_gpu_setup(setup, variable_indexes, storage)
+    }
+
+    #[cfg(test)]
+    pub fn from_gpu_setup(setup: &GpuSetup<Global>) -> CudaResult<Self> {
+        let layout = setup.layout.clone();
+        let domain_size = setup.constant_columns[0].len();
+        assert!(domain_size.is_power_of_two());
+        let variable_indexes = construct_indexes_from_hint(&setup.variables_hint, domain_size)?;
+        let storage = GenericSetupStorage::allocate(layout, domain_size);
+        Self::fill_from_gpu_setup(setup, &variable_indexes, storage)
+    }
+
+    #[cfg(test)]
     pub fn from_host_values<
         PP: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     >(
@@ -278,85 +258,22 @@ impl GenericSetupStorage<LagrangeBasis> {
         let domain_size = permutation_cols[0].len();
 
         let setup_layout = SetupLayout::from_base_setup_and_hints(base_setup);
-        let mut storage = GenericSetupStorage::allocate(setup_layout, domain_size)?;
+        let mut storage = GenericSetupStorage::allocate(setup_layout, domain_size);
 
-        for (dst, src) in storage
-            .storage
-            .as_single_slice_mut()
-            .chunks_mut(domain_size)
-            .zip(
-                permutation_cols
-                    .iter()
-                    .chain(constant_cols.iter())
-                    .chain(table_cols.iter()),
-            )
-        {
+        for (dst, src) in storage.as_single_slice_mut().chunks_mut(domain_size).zip(
+            permutation_cols
+                .iter()
+                .chain(constant_cols.iter())
+                .chain(table_cols.iter()),
+        ) {
             mem::h2d(src, dst)?;
         }
 
-        Ok(storage)
-    }
-
-    pub fn into_monomials(mut self) -> CudaResult<GenericSetupStorage<MonomialBasis>> {
-        let domain_size = self.domain_size();
-        let num_polys = self.num_polys();
-
-        ntt::batch_ntt(
-            self.as_single_slice_mut(),
-            false,
-            true,
-            domain_size,
-            num_polys,
-        )?;
-
-        ntt::batch_bitreverse(self.as_single_slice_mut(), domain_size)?;
-
-        let monomials = unsafe { std::mem::transmute(self) };
-
-        Ok(monomials)
-    }
-}
-
-impl GenericSetupStorage<MonomialBasis> {
-    pub fn into_coset_eval(
-        &self,
-        coset_idx: usize,
-        lde_degree: usize,
-        coset_storage: &mut GenericSetupStorage<CosetEvaluations>,
-    ) -> CudaResult<()> {
-        let domain_size = self.domain_size();
-        let num_polys = self.num_polys();
-
-        assert_eq!(coset_storage.domain_size(), domain_size);
-        assert_eq!(coset_storage.num_polys(), num_polys);
-
-        ntt::batch_coset_ntt_into(
-            self.as_single_slice(),
-            coset_storage.as_single_slice_mut(),
-            coset_idx,
-            domain_size,
-            lde_degree,
-            num_polys,
-        )?;
-
-        Ok(())
+        unsafe { Ok(storage.transmute()) }
     }
 }
 
 impl GenericSetupStorage<CosetEvaluations> {
-    pub fn build_subtree_for_coset(
-        &self,
-        cap_size: usize,
-        coset_idx: usize,
-    ) -> CudaResult<(SubTree, Vec<[F; 4]>)> {
-        let domain_size = self.domain_size();
-        let leaf_sources = self.as_single_slice();
-        let mut subtree = dvec!(2 * NUM_EL_PER_HASH * domain_size);
-        let subtree_root = compute_tree_cap(leaf_sources, &mut subtree, domain_size, cap_size, 1)?;
-        let subtree = SubTree::new(subtree, domain_size, cap_size, coset_idx);
-        Ok((subtree, subtree_root))
-    }
-
     pub(crate) fn barycentric_evaluate<A: GoodAllocator>(
         &self,
         bases: &PrecomputedBasisForBarycentric,
@@ -365,141 +282,74 @@ impl GenericSetupStorage<CosetEvaluations> {
     }
 }
 
-pub struct SetupCache {
-    monomials: GenericSetupStorage<MonomialBasis>,
-    cosets: Vec<Option<Rc<GenericSetupStorage<CosetEvaluations>>>>,
-    fri_lde_degree: usize,
-    used_lde_degree: usize,
+pub struct SetupCacheAux {
+    tree_cap: Vec<<DefaultTreeHasher as TreeHasher<F>>::Output>,
+    pub variable_indexes: DVec<u32>,
+    pub witness_indexes: DVec<u32>,
 }
 
+pub fn construct_indexes_from_hint<A: GoodAllocator>(
+    hint: &Vec<Vec<u32, A>>,
+    domain_size: usize,
+) -> CudaResult<DVec<u32>> {
+    let mut indexes = dvec![domain_size * hint.len()];
+    for (h, d) in hint.iter().zip(indexes.chunks_mut(domain_size)) {
+        let (d, padding) = d.split_at_mut(h.len());
+        mem::h2d(h, d)?;
+        if !padding.is_empty() {
+            set_by_value(padding, PACKED_PLACEHOLDER_BITMASK, get_h2d_stream())?;
+        }
+    }
+    Ok(indexes)
+}
+
+pub type SetupCache = StorageCache<SetupLayout, SetupCacheAux>;
+
 impl SetupCache {
-    pub fn from_monomial(
-        monomial_setup: GenericSetupStorage<MonomialBasis>,
+    pub fn new_from_gpu_setup<A: GoodAllocator>(
+        strategy: StorageCacheStrategy,
+        setup: &GpuSetup<A>,
         fri_lde_degree: usize,
         used_lde_degree: usize,
-    ) -> CudaResult<Self> {
-        assert!(fri_lde_degree.is_power_of_two());
-        assert!(used_lde_degree.is_power_of_two());
-
-        let cosets = vec![None; fri_lde_degree];
-
-        let this = Self {
-            monomials: monomial_setup,
-            cosets,
+    ) -> CudaResult<&mut Self> {
+        let setup_tree_cap = setup.setup_tree.get_cap();
+        if let Some(cache) = _setup_cache_get() {
+            if cache.aux.tree_cap.eq(&setup_tree_cap) {
+                assert_eq!(cache.fri_lde_degree, fri_lde_degree);
+                assert_eq!(cache.used_lde_degree, used_lde_degree);
+                assert_eq!(cache.layout, setup.layout);
+                println!("reusing setup cache");
+                return Ok(cache);
+            }
+            _setup_cache_reset();
+        }
+        let layout = setup.layout;
+        let domain_size = setup.constant_columns[0].len();
+        assert!(domain_size.is_power_of_two());
+        let cap_size = setup.setup_tree.cap_size;
+        let variable_indexes = construct_indexes_from_hint(&setup.variables_hint, domain_size)?;
+        let witness_indexes = construct_indexes_from_hint(&setup.witnesses_hint, domain_size)?;
+        let evaluations = GenericSetupStorage::create_from_gpu_setup(setup, &variable_indexes)?;
+        let aux = SetupCacheAux {
+            tree_cap: setup_tree_cap,
+            variable_indexes,
+            witness_indexes,
+        };
+        let mut cache = StorageCache::new_and_initialize(
+            strategy,
+            layout,
+            domain_size,
             fri_lde_degree,
             used_lde_degree,
-        };
-
-        Ok(this)
-    }
-
-    pub fn num_polys(&self) -> usize {
-        self.monomials.num_polys()
-    }
-
-    pub fn commit<H: TreeHasher<F, Output = [F; 4]>>(
-        &mut self,
-        cap_size: usize,
-    ) -> CudaResult<(Vec<SubTree>, Vec<[F; 4]>)> {
-        let fri_lde_degree = self.fri_lde_degree;
-        let coset_cap_size = coset_cap_size(cap_size, self.fri_lde_degree);
-        let mut setup_subtrees = vec![];
-        let mut setup_subtree_caps = vec![];
-
-        assert_eq!(self.cosets.len(), fri_lde_degree);
-
-        for coset_idx in 0..fri_lde_degree {
-            let coset_values = self.get_or_compute_coset_evals(coset_idx)?;
-            let (subtree, subtree_cap) =
-                coset_values.build_subtree_for_coset(coset_cap_size, coset_idx)?;
-            setup_subtree_caps.push(subtree_cap);
-            setup_subtrees.push(subtree);
+            cap_size,
+            aux,
+            evaluations,
+        )?;
+        let (_, computed_cap) = cache.get_commitment::<DefaultTreeHasher>(cap_size)?;
+        if !is_dry_run()? {
+            assert_eq!(cache.aux.tree_cap, computed_cap);
         }
-
-        let setup_tree_cap = setup_subtree_caps.compute_cap::<H>(&mut setup_subtrees, cap_size)?;
-        Ok((setup_subtrees, setup_tree_cap))
-    }
-
-    pub fn get_or_compute_coset_evals(
-        &mut self,
-        coset_idx: usize,
-    ) -> CudaResult<Rc<GenericSetupStorage<CosetEvaluations>>> {
-        assert!(coset_idx < self.used_lde_degree);
-
-        if REMEMBER_COSETS == false || coset_idx >= self.fri_lde_degree {
-            let mut tmp_coset = GenericSetupStorage::allocate(
-                self.monomials.layout.clone(),
-                self.monomials.domain_size(),
-            )?;
-            self.monomials
-                .into_coset_eval(coset_idx, self.used_lde_degree, &mut tmp_coset)?;
-            return Ok(Rc::new(tmp_coset));
-        }
-
-        if self.cosets[coset_idx].is_none() {
-            let domain_size = self.monomials.domain_size();
-
-            let mut current_storage =
-                GenericSetupStorage::allocate(self.monomials.layout.clone(), domain_size)?;
-
-            self.monomials.into_coset_eval(
-                coset_idx,
-                self.used_lde_degree,
-                &mut current_storage,
-            )?;
-            self.cosets[coset_idx] = Some(Rc::new(current_storage));
-        }
-
-        return Ok(self.cosets[coset_idx].as_ref().unwrap().clone());
-    }
-
-    #[allow(dead_code)]
-    pub fn query<H: TreeHasher<F, Output = [F; 4]>>(
-        &mut self,
-        coset_idx: usize,
-        fri_lde_degree: usize,
-        row_idx: usize,
-        domain_size: usize,
-        tree_holder: &TreeCache,
-    ) -> CudaResult<OracleQuery<F, H>> {
-        let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
-        tree_holder.get_setup_subtrees().query(
-            &leaf_sources.as_polynomials(),
-            coset_idx,
-            fri_lde_degree,
-            row_idx,
-            domain_size,
-        )
-    }
-
-    pub fn batch_query<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
-        &mut self,
-        coset_idx: usize,
-        indexes: &DVec<u32, SmallStaticDeviceAllocator>,
-        num_queries: usize,
-        domain_size: usize,
-        h_all_leaf_elems: &mut Vec<F, A>,
-        h_all_proofs: &mut Vec<F, A>,
-        tree_holder: &TreeCache,
-    ) -> CudaResult<()> {
-        let leaf_sources = self.get_or_compute_coset_evals(coset_idx)?;
-        let oracle_data = tree_holder.get_setup_subtree(coset_idx);
-        batch_query::<H, A>(
-            indexes,
-            num_queries,
-            leaf_sources.deref(),
-            leaf_sources.num_polys(),
-            oracle_data,
-            oracle_data.cap_size,
-            domain_size,
-            1,
-            h_all_leaf_elems,
-            h_all_proofs,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub fn layout(&self) -> SetupLayout {
-        self.monomials.layout.clone()
+        _setup_cache_set(cache);
+        Ok(_setup_cache_get().unwrap())
     }
 }

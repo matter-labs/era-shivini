@@ -21,19 +21,23 @@ impl PoWRunner for DeviceBlake2sPOW {
             let result_as_mut_slice =
                 std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut _, 1);
             let result_as_var = DeviceVariable::from_mut_slice(result_as_mut_slice);
-            boojum_cuda::blake2s::blake2s_pow(
-                seed,
-                pow_bits,
-                u64::MAX,
-                result_as_var,
-                get_stream(),
-            )
-            .expect("pow on device");
+            if !is_dry_run().unwrap() {
+                boojum_cuda::blake2s::blake2s_pow(
+                    seed,
+                    pow_bits,
+                    u64::MAX,
+                    result_as_var,
+                    get_stream(),
+                )
+                .expect("pow on device");
+            }
             let h_result: F = result.into();
             h_result.0
         };
 
-        assert!(Self::verify_from_bytes(h_seed, pow_bits, challenge));
+        if !is_dry_run().unwrap() {
+            assert!(Self::verify_from_bytes(h_seed, pow_bits, challenge));
+        }
 
         challenge
     }

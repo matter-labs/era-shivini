@@ -20,13 +20,15 @@ pub fn build_tree(
             DeviceSlice::from_mut_slice(result),
         )
     };
-    boojum_cuda::poseidon::build_merkle_tree::<P>(
-        leaf_sources,
-        result,
-        num_elems_per_leaf.trailing_zeros(),
-        get_stream(),
-        num_layers as u32,
-    )
+    if_not_dry_run! {
+        boojum_cuda::poseidon::build_merkle_tree::<P>(
+            leaf_sources,
+            result,
+            num_elems_per_leaf.trailing_zeros(),
+            get_stream(),
+            num_layers,
+        )
+    }
 }
 
 #[allow(dead_code)]
@@ -46,16 +48,16 @@ pub fn build_leaves_from_chunk(
             DeviceSlice::from_mut_slice(result),
         )
     };
-    boojum_cuda::poseidon::build_merkle_tree_leaves::<P>(
-        d_values,
-        d_result,
-        0,
-        load_intermediate,
-        store_intermediate,
-        get_stream(),
-    )?;
-
-    Ok(())
+    if_not_dry_run! {
+        boojum_cuda::poseidon::build_merkle_tree_leaves::<P>(
+            d_values,
+            d_result,
+            0,
+            load_intermediate,
+            store_intermediate,
+            get_stream(),
+        )
+    }
 }
 
 #[allow(dead_code)]
@@ -77,10 +79,12 @@ pub fn build_tree_nodes(
             DeviceSlice::from_mut_slice(result),
         )
     };
-    boojum_cuda::poseidon::build_merkle_tree_nodes::<P>(
-        leaf_sources,
-        result,
-        num_layers as u32,
-        get_stream(),
-    )
+    if_not_dry_run! {
+        boojum_cuda::poseidon::build_merkle_tree_nodes::<P>(
+            leaf_sources,
+            result,
+            num_layers,
+            get_stream(),
+        )
+    }
 }
