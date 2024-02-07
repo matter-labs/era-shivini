@@ -234,97 +234,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
         );
     }
 
-    // struct Setup; struct ProveOnce; struct ProveRepeated;
-    //
-    // trait Scenario {
-    // }
-    // impl Scenario for Setup {}
-    // impl Scenario for ProveOnce {}
-    // impl Scenario for ProveRepeated {}
-    //
-    // trait IntoAssembly<const DO_SYNTH: bool> {
-    //     fn into_assembly<CFG, GC, T, CR>(
-    //         cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
-    //         do_synth: bool,
-    //         finalization_hint: Option<&FinalizationHintsForProver>,
-    //     ) -> (
-    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
-    //         Option<FinalizationHintsForProver>,
-    //     )
-    //     where 
-    //         CFG: CSConfig,
-    //         GC: GateConfigurationHolder<F>,
-    //         T: StaticToolboxHolder,
-    //         CR: CircuitResolver<F, CFG::ResolverConfig>;
-    // }
-    // struct Caller;
-    //
-    // impl IntoAssembly< false> for Caller {
-    //     fn into_assembly<CFG, GC, T, CR>(
-    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
-    //         _do_synth: bool,
-    //         _finalization_hint: Option<&FinalizationHintsForProver>,
-    //     ) -> (
-    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
-    //         Option<FinalizationHintsForProver>,
-    //     )
-    //     where 
-    //         CFG: CSConfig,
-    //         GC: GateConfigurationHolder<F>,
-    //         T: StaticToolboxHolder,
-    //         CR: CircuitResolver<F, CFG::ResolverConfig>,
-    //     {
-    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP);
-    //
-    //         let (_, finalization_hint) = cs.pad_and_shrink();
-    //         (cs.into_assembly(), Some(finalization_hint))
-    //     }
-    // }
-    //
-    // impl IntoAssembly< true> for Caller {
-    //     fn into_assembly<CFG, GC, T, CR>(
-    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CR>,
-    //         _do_synth: bool,
-    //         finalization_hint: Option<&FinalizationHintsForProver>,
-    //     ) -> (
-    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
-    //         Option<FinalizationHintsForProver>,
-    //     )
-    //     where 
-    //         CFG: CSConfig,
-    //         GC: GateConfigurationHolder<F>,
-    //         T: StaticToolboxHolder,
-    //         CR: CircuitResolver<F, CFG::ResolverConfig>,
-    //     {
-    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP == false);
-    //         let hint = finalization_hint.unwrap();
-    //         cs.pad_and_shrink_using_hint(hint);
-    //         (cs.into_assembly(), None)
-    //     }
-    // }
-
-    // impl IntoAssembly<false, false> for Caller {
-    //     fn into_assembly<CFG, GC, T, CrI>(
-    //         mut cs: CSReferenceImplementation<F, P, CFG, GC, T, CrI>,
-    //         _do_synth: bool,
-    //         finalization_hint: Option<&FinalizationHintsForProver>,
-    //     ) -> (
-    //         CSReferenceAssembly<F, F, CFG, impl CircuitResolver<F, CFG::ResolverConfig>>,
-    //         Option<FinalizationHintsForProver>,
-    //     )
-    //     where 
-    //         CFG: CSConfig,
-    //         GC: GateConfigurationHolder<F>,
-    //         T: StaticToolboxHolder,
-    //         CrI: CircuitResolver<F, CFG::ResolverConfig>,
-    //     {
-    //         assert!(<CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP);
-    //         let hint = finalization_hint.unwrap();
-    //         (cs.into_assembly_for_repeated_proving(hint), None)
-    //     }
-    // }
-
-
+ 
     fn into_assembly<CFG: CSConfig, GC: GateConfigurationHolder<F>, T: StaticToolboxHolder, A: GoodAllocator>(
         mut cs: CSReferenceImplementation<F, P, CFG, GC, T>,
         do_synth: bool,
@@ -346,9 +256,6 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
         }
     }
-
-
-        
 
     let builder_arg = num_vars.unwrap();
 
