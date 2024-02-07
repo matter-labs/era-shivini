@@ -251,8 +251,12 @@ impl StaticDeviceAllocator {
         None
     }
 
-    fn free_block(&self, index: usize) {
-        self.bitmap.lock().unwrap()[index] = false;
+    fn free_blocks(&self, index: usize, num_blocks: usize) {
+        assert!(num_blocks > 0);
+        let mut guard = self.bitmap.lock().unwrap();
+        for i in index..index + num_blocks {
+            guard[i] = false;
+        }
     }
 
     pub fn free(self) -> CudaResult<()> {
@@ -351,10 +355,7 @@ unsafe impl Allocator for StaticDeviceAllocator {
         assert_eq!(offset % self.block_size_in_bytes, 0);
         let index = offset / self.block_size_in_bytes;
         let num_blocks = size / self.block_size_in_bytes;
-        assert!(num_blocks > 0);
-        for actual_idx in index..index + num_blocks {
-            self.free_block(actual_idx);
-        }
+        self.free_blocks(index, num_blocks);
         #[cfg(feature = "allocator_stats")]
         self.stats.lock().unwrap().free(index);
     }
