@@ -130,6 +130,7 @@ impl StaticHostAllocator {
             .is_ok();
     }
 
+    #[allow(dead_code)]
     pub fn free(self) -> CudaResult<()> {
         println!("freeing static host allocation");
         assert_eq!(Arc::weak_count(&self.memory), 0);
@@ -208,6 +209,7 @@ impl SmallStaticHostAllocator {
         Ok(Self { inner })
     }
 
+    #[allow(dead_code)]
     pub fn free(self) -> CudaResult<()> {
         self.inner.free()
     }

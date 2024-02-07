@@ -158,8 +158,14 @@ impl<L: GenericStorageLayout> GenericStorage<LagrangeBasis, L> {
         let domain_size = self.domain_size;
         let num_polys = self.num_polys;
         let input = self.as_single_slice_mut();
-        ntt::batch_ntt(input, false, true, domain_size, num_polys)?;
-        ntt::batch_bitreverse(input, domain_size)?;
+        ntt::batch_ntt_with_epilogue(
+            input,
+            false,
+            true,
+            domain_size,
+            num_polys,
+            |chunk, stream| ntt::batch_bitreverse_on_stream(chunk, domain_size, stream),
+        )?;
         let result = unsafe { self.transmute() };
         Ok(result)
     }
@@ -174,8 +180,15 @@ impl<L: GenericStorageLayout> GenericStorage<LagrangeBasis, L> {
         let num_polys = self.num_polys;
         let inputs = self.as_single_slice();
         let outputs = storage.as_single_slice_mut();
-        ntt::batch_ntt_into(inputs, outputs, false, true, domain_size, num_polys)?;
-        ntt::batch_bitreverse(outputs, domain_size)?;
+        ntt::batch_ntt_with_epilogue_into(
+            inputs,
+            outputs,
+            false,
+            true,
+            domain_size,
+            num_polys,
+            |chunk, stream| ntt::batch_bitreverse_on_stream(chunk, domain_size, stream),
+        )?;
         let result = unsafe { storage.transmute() };
         Ok(result)
     }
@@ -192,8 +205,14 @@ impl<L: GenericStorageLayout> GenericStorage<MonomialBasis, L> {
         let domain_size = self.domain_size;
         let num_polys = self.num_polys;
         let input = self.as_single_slice_mut();
-        ntt::batch_ntt(input, false, false, domain_size, num_polys)?;
-        ntt::batch_bitreverse(input, domain_size)?;
+        ntt::batch_ntt_with_epilogue(
+            input,
+            false,
+            false,
+            domain_size,
+            num_polys,
+            |chunk, stream| ntt::batch_bitreverse_on_stream(chunk, domain_size, stream),
+        )?;
         let evaluations = unsafe { self.transmute() };
         Ok(evaluations)
     }
@@ -208,8 +227,15 @@ impl<L: GenericStorageLayout> GenericStorage<MonomialBasis, L> {
         let num_polys = self.num_polys;
         let inputs = self.as_single_slice();
         let outputs = storage.as_single_slice_mut();
-        ntt::batch_ntt_into(inputs, outputs, false, false, domain_size, num_polys)?;
-        ntt::batch_bitreverse(outputs, domain_size)?;
+        ntt::batch_ntt_with_epilogue_into(
+            inputs,
+            outputs,
+            false,
+            false,
+            domain_size,
+            num_polys,
+            |chunk, stream| ntt::batch_bitreverse_on_stream(chunk, domain_size, stream),
+        )?;
         let result = unsafe { storage.transmute() };
         Ok(result)
     }

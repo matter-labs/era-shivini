@@ -1,5 +1,7 @@
 use super::*;
 
+use cudart::stream::CudaStreamWaitEventFlags;
+
 // ntt operations
 
 // Raw boojum bindings
@@ -139,6 +141,18 @@ pub(crate) fn intt_into(input: &[F], output: &mut [F]) -> CudaResult<()> {
     )
 }
 
+fn get_l2_chunk_elems(domain_size: usize) -> usize {
+    let l2_cache_size_bytes = _l2_cache_size();
+    // Targeting 3/8 of L2 capacity seems to yield good performance on L4
+    let l2_cache_size_with_safety_margin = (l2_cache_size_bytes * 3) / 8;
+    let bytes_per_col = 8 * domain_size;
+    let cols_in_l2 = l2_cache_size_with_safety_margin / bytes_per_col;
+    if cols_in_l2 > 0 {
+        return domain_size * cols_in_l2;
+    }
+    domain_size
+}
+
 fn l2_chunked<E>(
     inputs: &mut [F],
     bitreversed_input: bool,
@@ -150,64 +164,60 @@ fn l2_chunked<E>(
     mut epilogue: E,
 ) -> CudaResult<()>
 where
-    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>
+    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
-    let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+    let l2_chunk_elems = get_l2_chunk_elems(domain_size);
     let mut num_cols_processed = 0;
     let main_stream = get_stream();
-    let chunk_streams = [get_stream0(), get_stream1()];
-    let stream1 = get_stream1();
-    let start_event = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+    let stream0 = &_aux_streams()[0];
+    let stream1 = &_aux_streams()[1];
+    let start_event = &_aux_events()[0];
+    let end_event0 = &_aux_events()[1];
+    let end_event1 = &_aux_events()[2];
     start_event.record(&main_stream)?;
-    stream0.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
-    stream1.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
     for input_chunk in inputs.chunks_mut(l2_chunk_elems) {
-        let num_cols_this_chunk = input_chunk.len() / domain_size;
-        let num_cols_stream0 = num_cols_this_chunk / 2;
-        let num_cols_stream1 = num_cols_this_chunk - num_cols_stream0;
-        let elems_stream0 = num_cols_stream0 * domain_size;
-        if num_cols_stream0 > 0 {
-            raw_batch_coset_ntt(
-                &mut input_chunk[..elems_stream0],
-                bitreversed_input,
-                inverse,
-                coset_idx,
-                domain_size,
-                lde_degree,
-                num_cols_stream0,
-                &stream0,
-            )?;
+        let len = input_chunk.len();
+        let num_cols_this_chunk = len / domain_size;
+        let num_cols0 = num_cols_this_chunk / 2;
+        let num_cols1 = num_cols_this_chunk - num_cols0;
+        let elems0 = num_cols0 * domain_size;
+        // breadth first
+        for ((stream, num_cols), range) in [stream0, stream1]
+            .iter()
+            .zip([num_cols0, num_cols1])
+            .zip([0..elems0, elems0..len])
+        {
+            if num_cols > 0 {
+                raw_batch_coset_ntt(
+                    &mut input_chunk[range.clone()],
+                    bitreversed_input,
+                    inverse,
+                    coset_idx,
+                    domain_size,
+                    lde_degree,
+                    num_cols,
+                    stream,
+                )?;
+            }
         }
-        if num_cols_stream1 > 0 {
-            raw_batch_coset_ntt(
-                &mut input_chunk[elems_stream0..],
-                bitreversed_input,
-                inverse,
-                coset_idx,
-                domain_size,
-                lde_degree,
-                num_cols_stream1,
-                &stream1,
-            )?;
+        for ((stream, num_cols), range) in [stream0, stream1]
+            .iter()
+            .zip([num_cols0, num_cols1])
+            .zip([0..elems0, elems0..len])
+        {
+            if num_cols > 0 {
+                epilogue(&mut input_chunk[range], stream)?;
+            }
+            num_cols_processed += num_cols;
         }
-        if num_cols_stream0 > 0 {
-            epilogue(&mut input_chunk[..elems_stream0], &stream0)?;
-        }
-        if num_cols_stream1 > 0 {
-            epilogue(&mut input_chunk[elems_stream0..], &stream1)?;
-        }
-        num_cols_processed += num_cols_this_chunk;
     }
-    let end_event0 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-    let end_event1 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-    end_event0.record(&stream0)?;
-    end_event1.record(&stream1)?;
-    main_stream.wait_event(&end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
-    main_stream.wait_event(&end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
-    
-    end_event0.destroy()?;
-    end_event1.destroy()?;
-    
+    end_event0.record(stream0)?;
+    end_event1.record(stream1)?;
+    main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
+    main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
+
     assert_eq!(num_cols_processed, num_polys);
 
     Ok(())
@@ -222,78 +232,74 @@ fn l2_chunked_into<E>(
     domain_size: usize,
     lde_degree: usize,
     num_polys: usize,
-    stream: &CudaStream,
     mut epilogue: E,
 ) -> CudaResult<()>
 where
-    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>
+    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
-    let l2_chunk_elems = get_l2_chunk_elems(domain_size)?;
+    let l2_chunk_elems = get_l2_chunk_elems(domain_size);
     let mut num_cols_processed = 0;
     let main_stream = get_stream();
-    let stream0 = get_stream0();;
-    let stream1 = get_stream1();
-    let start_event = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
+    let stream0 = &_aux_streams()[0];
+    let stream1 = &_aux_streams()[1];
+    let start_event = &_aux_events()[0];
+    let end_event0 = &_aux_events()[1];
+    let end_event1 = &_aux_events()[2];
     start_event.record(&main_stream)?;
-    stream0.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
-    stream1.wait_event(&start_event, CudaStreamWaitEventFlags::DEFAULT)?;
-    for input_chunk, output_chunk in inputs.chunks(l2_chunk_elems)
+    stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    for (input_chunk, output_chunk) in inputs
+        .chunks(l2_chunk_elems)
         .zip(outputs.chunks_mut(l2_chunk_elems))
     {
-        assert_eq!(input_chunk.len(), output_chunk.len());
-        let num_cols_this_chunk = input_chunk.len() / domain_size;
-        let num_cols_stream0 = num_cols_this_chunk / 2;
-        let num_cols_stream1 = num_cols_this_chunk - num_cols_stream0;
-        let elems_stream0 = num_cols_stream0 * domain_size;
-        if num_cols_stream0 > 0 {
-            raw_batch_coset_ntt_into(
-                &input_chunk[..elems_stream0],
-                &mut output_chunk[..elems_stream0],
-                bitreversed_input,
-                inverse,
-                coset_idx,
-                domain_size,
-                lde_degree,
-                num_cols_stream0,
-                &stream0,
-            )?;
+        let len = input_chunk.len();
+        assert_eq!(len, output_chunk.len());
+        let num_cols_this_chunk = len / domain_size;
+        let num_cols0 = num_cols_this_chunk / 2;
+        let num_cols1 = num_cols_this_chunk - num_cols0;
+        let elems0 = num_cols0 * domain_size;
+        // breadth first
+        for ((stream, num_cols), range) in [stream0, stream1]
+            .iter()
+            .zip([num_cols0, num_cols1])
+            .zip([0..elems0, elems0..len])
+        {
+            if num_cols > 0 {
+                raw_batch_coset_ntt_into(
+                    &input_chunk[range.clone()],
+                    &mut output_chunk[range.clone()],
+                    bitreversed_input,
+                    inverse,
+                    coset_idx,
+                    domain_size,
+                    lde_degree,
+                    num_cols,
+                    stream,
+                )?;
+            }
         }
-        if num_cols_stream1 > 0 {
-            raw_batch_coset_ntt_into(
-                &input_chunk[elems_stream0..],
-                &mut output_chunk[elems_stream0..],
-                bitreversed_input,
-                inverse,
-                coset_idx,
-                domain_size,
-                lde_degree,
-                num_cols_stream1,
-                &stream1,
-            )?;
+        for ((stream, num_cols), range) in [stream0, stream1]
+            .iter()
+            .zip([num_cols0, num_cols1])
+            .zip([0..elems0, elems0..len])
+        {
+            if num_cols > 0 {
+                epilogue(&mut output_chunk[range], stream)?;
+            }
+            num_cols_processed += num_cols;
         }
-        if num_cols_stream0 > 0 {
-            epilogue(&mut input_chunk[..elems_stream0], &stream0)?;
-        }
-        if num_cols_stream1 > 0 {
-            epilogue(&mut input_chunk[elems_stream0..], &stream1)?;
-        }
-        num_cols_processed += num_cols_this_chunk;
     }
-    let end_event0 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-    let end_event1 = CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING)?;
-    end_event0.record(&stream0)?;
-    end_event1.record(&stream1)?;
-    main_stream.wait_event(&end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
-    main_stream.wait_event(&end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
-    
-    end_event0.destroy()?;
-    end_event1.destroy()?;
-    
+    end_event0.record(stream0)?;
+    end_event1.record(stream1)?;
+    main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
+    main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
+
     assert_eq!(num_cols_processed, num_polys);
 
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) fn batch_ntt(
     input: &mut [F],
     bitreversed_input: bool,
@@ -319,10 +325,10 @@ pub(crate) fn batch_ntt_with_epilogue<E>(
     inverse: bool,
     domain_size: usize,
     num_polys: usize,
-    mut epilogue: E,
+    epilogue: E,
 ) -> CudaResult<()>
 where
-    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>
+    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
     l2_chunked(
         input,
@@ -336,6 +342,7 @@ where
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn batch_ntt_into(
     inputs: &[F],
     outputs: &mut [F],
@@ -357,17 +364,17 @@ pub(crate) fn batch_ntt_into(
     )
 }
 
-pub(crate) fn batch_ntt_with_epilogue_into(
+pub(crate) fn batch_ntt_with_epilogue_into<E>(
     inputs: &[F],
     outputs: &mut [F],
     bitreversed_input: bool,
     inverse: bool,
     domain_size: usize,
     num_polys: usize,
-    mut epilogue: E,
+    epilogue: E,
 ) -> CudaResult<()>
 where
-    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>
+    E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
     l2_chunked_into(
         inputs,
@@ -482,9 +489,12 @@ pub(crate) fn bitreverse(input: &mut [F]) -> CudaResult<()> {
     }
 }
 
-pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<()> {
+pub(crate) fn batch_bitreverse_on_stream(
+    input: &mut [F],
+    num_rows: usize,
+    stream: &CudaStream,
+) -> CudaResult<()> {
     use boojum_cuda::device_structures::DeviceMatrixMut;
-    let stream = get_stream();
     let mut input = unsafe {
         let input = DeviceSlice::from_mut_slice(input);
         DeviceMatrixMut::new(input, num_rows)
@@ -492,4 +502,9 @@ pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<(
     if_not_dry_run! {
         boojum_cuda::ops_complex::bit_reverse_in_place(&mut input, stream)
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn batch_bitreverse(input: &mut [F], num_rows: usize) -> CudaResult<()> {
+    batch_bitreverse_on_stream(input, num_rows, get_stream())
 }
