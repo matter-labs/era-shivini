@@ -78,8 +78,8 @@ impl ProverContext {
                 aux_streams,
                 aux_events,
             });
-            // 6 sets of powers * 2X safety margin
-            set_l2_persistence_carveout(2 * 6 * 8 * (1 << 12))?;
+            // 10 sets of powers * 2X safety margin
+            set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
             set_l2_persistence_for_twiddles(get_stream())?;
             for stream in _aux_streams() {
                 set_l2_persistence_for_twiddles(stream)?;
@@ -154,44 +154,44 @@ impl Drop for ProverContext {
     }
 }
 
+// Should some of this logic live in boojum-cuda instead?
 fn set_l2_persistence_carveout(num_bytes: usize) -> CudaResult<()> {
-    use cudart_sys::CudaLimit;
     use cudart::device::device_set_limit;
+    use cudart_sys::CudaLimit;
     let l2_persist_max = get_context().l2_persist_max;
     let carveout = std::cmp::min(num_bytes, l2_persist_max);
     device_set_limit(CudaLimit::PersistingL2CacheSize, carveout)?;
     Ok(())
 }
 
-fn set_l2_persistence(
-    data: &DeviceSlice<F>,
-    stream: &CudaStream,
-) -> CudaResult<()> {
+fn set_l2_persistence(data: &DeviceSlice<F>, stream: &CudaStream) -> CudaResult<()> {
     use cudart::execution::CudaLaunchAttribute;
-    use cudart_sys::CudaAccessProperty;
     use cudart_sys::CudaAccessPolicyWindow;
+    use cudart_sys::CudaAccessProperty;
     let num_bytes = 8 * data.len();
-    let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(
-        CudaAccessPolicyWindow {
-            base_ptr: data.as_ptr() as *mut std::os::raw::c_void,
-            num_bytes,
-            hitRatio: 1.0,
-            hitProp: CudaAccessProperty::Persisting,
-            missProp: CudaAccessProperty::Streaming,
-        },
-    );
+    let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(CudaAccessPolicyWindow {
+        base_ptr: data.as_ptr() as *mut std::os::raw::c_void,
+        num_bytes,
+        hitRatio: 1.0,
+        hitProp: CudaAccessProperty::Persisting,
+        missProp: CudaAccessProperty::Streaming,
+    });
     stream.set_attribute(stream_attribute)?;
     Ok(())
 }
 
-fn set_l2_persistence_for_twiddles(stream: &CudaStream) -> CudaResult<()>{
-    let ctx = unsafe { &get_context().cuda_context };
+fn set_l2_persistence_for_twiddles(stream: &CudaStream) -> CudaResult<()> {
+    let ctx = &get_context().cuda_context;
     set_l2_persistence(ctx.powers_of_w_fine.as_ref(), stream)?;
     set_l2_persistence(ctx.powers_of_w_coarse.as_ref(), stream)?;
     set_l2_persistence(ctx.powers_of_w_fine_bitrev_for_ntt.as_ref(), stream)?;
     set_l2_persistence(ctx.powers_of_w_coarse_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_inv_fine_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_inv_coarse_bitrev_for_ntt.as_ref(), stream)?;
     set_l2_persistence(ctx.powers_of_g_f_fine.as_ref(), stream)?;
     set_l2_persistence(ctx.powers_of_g_f_coarse.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_i_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_i_coarse.as_ref(), stream)?;
     Ok(())
 }
 

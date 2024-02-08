@@ -7,7 +7,8 @@ edition = "2021"
 
 [dependencies]
 boojum = { git = "https://github.com/matter-labs/era-boojum", branch = "main" }
-boojum-cuda = { git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main" }
+# boojum-cuda = { git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main" }
+boojum-cuda = { path = "/home/mcarilli_matterlabs_dev/era-boojum-cuda", package = "boojum-cuda" }
 cudart = { git = "https://github.com/matter-labs/era-cuda", branch = "main", package = "cudart" }
 cudart-sys = { git = "https://github.com/matter-labs/era-cuda", branch = "main", package = "cudart-sys" }
 circuit_definitions = { git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.4.1", package = "circuit_definitions", optional = true }
