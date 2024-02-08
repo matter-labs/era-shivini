@@ -1190,7 +1190,7 @@ mod zksync {
             proof_cfg.merkle_tree_cap_size,
         );
         let mut proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
-        let witness = proving_cs.materialize_witness_vec();
+        let witness = proving_cs.witness.unwrap();
         let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
         let gpu_setup = {
             let _ctx = ProverContext::create().expect("gpu prover context");
