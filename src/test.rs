@@ -242,7 +242,7 @@ fn test_permutation_polys() {
     let copy_permutation_polys_as_slice_view = actual_copy_permutation_polys.as_single_slice_mut();
     println!("GenericSetupStorage is allocated");
     let variable_indexes =
-        construct_indexes_from_hint(&gpu_setup.variables_hint, domain_size).unwrap();
+        construct_indexes_from_hint(&gpu_setup.variables_hint, domain_size, &worker).unwrap();
     materialize_permutation_cols_from_indexes_into(
         copy_permutation_polys_as_slice_view,
         &variable_indexes,
@@ -297,7 +297,7 @@ fn test_setup_comparison() {
     )
     .expect("gpu setup");
 
-    let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup).unwrap();
+    let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup, &worker).unwrap();
 
     assert_eq!(
         expected_setup.inner.to_vec().unwrap(),
@@ -328,7 +328,13 @@ fn clone_reference_tree(
 #[test]
 #[ignore]
 fn test_dry_runs() {
-    let (setup_cs, finalization_hint) = init_or_synth_cs_for_sha256::<DevCSConfig, true>(None);
+    let (setup_cs, finalization_hint) =
+        init_or_synth_cs_for_sha256::<DevCSConfig, Global, true>(None);
+    let (proving_cs, _) =
+        init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, true>(finalization_hint.as_ref());
+    let witness = proving_cs.witness.unwrap();
+    let (reusable_cs, _) =
+        init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(finalization_hint.as_ref());
 
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
@@ -349,11 +355,6 @@ fn test_dry_runs() {
     .unwrap();
 
     assert!(domain_size.is_power_of_two());
-    let (mut proving_cs, _) =
-        init_or_synth_cs_for_sha256::<ProvingCSConfig, true>(finalization_hint.as_ref());
-    let witness = proving_cs.materialize_witness_vec();
-    let (reusable_cs, _) =
-        init_or_synth_cs_for_sha256::<ProvingCSConfig, false>(finalization_hint.as_ref());
     let candidates =
         CacheStrategy::get_strategy_candidates(&reusable_cs, &prover_config, &gpu_setup);
     for (_, strategy) in candidates.iter().copied() {
@@ -903,7 +904,7 @@ mod zksync {
         )
         .expect("gpu setup");
 
-        let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup).unwrap();
+        let actual_setup = GenericSetupStorage::from_gpu_setup(&gpu_setup, &worker).unwrap();
 
         assert_eq!(
             expected_setup.inner.to_vec().unwrap(),

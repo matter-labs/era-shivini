@@ -112,6 +112,7 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
             setup,
             fri_lde_degree,
             used_lde_degree,
+            worker,
         )?;
         if !is_dry_run()? {
             println!("◆ setup: {:?}", timer.elapsed());

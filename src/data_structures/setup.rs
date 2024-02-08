@@ -1,4 +1,5 @@
 use boojum::cs::{implementations::polynomial_storage::SetupBaseStorage, oracle::TreeHasher};
+use boojum::worker::Worker;
 use std::ops::Range;
 
 use crate::cs::{
@@ -168,6 +169,7 @@ impl GenericSetupStorage<LagrangeBasis> {
     pub fn fill_from_gpu_setup<A: GoodAllocator>(
         setup: &GpuSetup<A>,
         variable_indexes: &DVec<u32>,
+        worker: &Worker,
         mut storage: GenericSetupStorage<Undefined>,
     ) -> CudaResult<Self> {
         let GpuSetup {
@@ -196,12 +198,15 @@ impl GenericSetupStorage<LagrangeBasis> {
             num_copy_permutation_polys,
             domain_size,
         )?;
+        let mut pending_callbacks = vec![];
         for (dst, src) in remaining_polys
             .chunks_mut(domain_size)
             .zip(constant_columns.iter().chain(lookup_tables_columns.iter()))
         {
-            mem::h2d(src, dst)?;
+            pending_callbacks.push(mem::h2d_buffered(src, dst, domain_size / 2, worker)?);
         }
+        get_h2d_stream().synchronize()?;
+        drop(pending_callbacks);
         let result = unsafe { storage.transmute() };
         Ok(result)
     }
@@ -209,21 +214,23 @@ impl GenericSetupStorage<LagrangeBasis> {
     pub fn create_from_gpu_setup<A: GoodAllocator>(
         setup: &GpuSetup<A>,
         variable_indexes: &DVec<u32>,
+        worker: &Worker,
     ) -> CudaResult<Self> {
         let layout = setup.layout.clone();
         let domain_size = setup.constant_columns[0].len();
         let storage = GenericSetupStorage::allocate(layout, domain_size);
-        Self::fill_from_gpu_setup(setup, variable_indexes, storage)
+        Self::fill_from_gpu_setup(setup, variable_indexes, worker, storage)
     }
 
     #[cfg(test)]
-    pub fn from_gpu_setup(setup: &GpuSetup<Global>) -> CudaResult<Self> {
+    pub fn from_gpu_setup(setup: &GpuSetup<Global>, worker: &Worker) -> CudaResult<Self> {
         let layout = setup.layout.clone();
         let domain_size = setup.constant_columns[0].len();
         assert!(domain_size.is_power_of_two());
-        let variable_indexes = construct_indexes_from_hint(&setup.variables_hint, domain_size)?;
+        let variable_indexes =
+            construct_indexes_from_hint(&setup.variables_hint, domain_size, worker)?;
         let storage = GenericSetupStorage::allocate(layout, domain_size);
-        Self::fill_from_gpu_setup(setup, &variable_indexes, storage)
+        Self::fill_from_gpu_setup(setup, &variable_indexes, worker, storage)
     }
 
     #[cfg(test)]
@@ -291,15 +298,21 @@ pub struct SetupCacheAux {
 pub fn construct_indexes_from_hint<A: GoodAllocator>(
     hint: &Vec<Vec<u32, A>>,
     domain_size: usize,
+    worker: &Worker,
 ) -> CudaResult<DVec<u32>> {
+    let stream = get_h2d_stream();
     let mut indexes = dvec![domain_size * hint.len()];
+    let mut pending_callbacks = vec![];
     for (h, d) in hint.iter().zip(indexes.chunks_mut(domain_size)) {
         let (d, padding) = d.split_at_mut(h.len());
-        mem::h2d(h, d)?;
+        let result = mem::h2d_buffered(h, d, domain_size / 2, worker)?;
+        pending_callbacks.push(result);
         if !padding.is_empty() {
-            set_by_value(padding, PACKED_PLACEHOLDER_BITMASK, get_h2d_stream())?;
+            set_by_value(padding, PACKED_PLACEHOLDER_BITMASK, stream)?;
         }
     }
+    stream.synchronize()?;
+    drop(pending_callbacks);
     Ok(indexes)
 }
 
@@ -311,7 +324,8 @@ impl SetupCache {
         setup: &GpuSetup<A>,
         fri_lde_degree: usize,
         used_lde_degree: usize,
-    ) -> CudaResult<&mut Self> {
+        worker: &Worker,
+    ) -> CudaResult<&'static mut Self> {
         let setup_tree_cap = setup.setup_tree.get_cap();
         if let Some(cache) = _setup_cache_get() {
             if cache.aux.tree_cap.eq(&setup_tree_cap) {
@@ -327,9 +341,12 @@ impl SetupCache {
         let domain_size = setup.constant_columns[0].len();
         assert!(domain_size.is_power_of_two());
         let cap_size = setup.setup_tree.cap_size;
-        let variable_indexes = construct_indexes_from_hint(&setup.variables_hint, domain_size)?;
-        let witness_indexes = construct_indexes_from_hint(&setup.witnesses_hint, domain_size)?;
-        let evaluations = GenericSetupStorage::create_from_gpu_setup(setup, &variable_indexes)?;
+        let variable_indexes =
+            construct_indexes_from_hint(&setup.variables_hint, domain_size, worker)?;
+        let witness_indexes =
+            construct_indexes_from_hint(&setup.witnesses_hint, domain_size, worker)?;
+        let evaluations =
+            GenericSetupStorage::create_from_gpu_setup(setup, &variable_indexes, worker)?;
         let aux = SetupCacheAux {
             tree_cap: setup_tree_cap,
             variable_indexes,
