@@ -174,9 +174,11 @@ where
     let start_event = &_aux_events()[0];
     let end_event0 = &_aux_events()[1];
     let end_event1 = &_aux_events()[2];
-    start_event.record(&main_stream)?;
-    stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
-    stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    if_not_dry_run! {
+        start_event.record(&main_stream)?;
+        stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+        stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)
+    }?;
     for input_chunk in inputs.chunks_mut(l2_chunk_elems) {
         let len = input_chunk.len();
         let num_cols_this_chunk = len / domain_size;
@@ -213,10 +215,12 @@ where
             num_cols_processed += num_cols;
         }
     }
-    end_event0.record(stream0)?;
-    end_event1.record(stream1)?;
-    main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
-    main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
+    if_not_dry_run! {
+        end_event0.record(stream0)?;
+        end_event1.record(stream1)?;
+        main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
+        main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)
+    }?;
 
     assert_eq!(num_cols_processed, num_polys);
 
@@ -245,9 +249,11 @@ where
     let start_event = &_aux_events()[0];
     let end_event0 = &_aux_events()[1];
     let end_event1 = &_aux_events()[2];
-    start_event.record(&main_stream)?;
-    stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
-    stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+    if_not_dry_run! {
+        start_event.record(&main_stream)?;
+        stream0.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)?;
+        stream1.wait_event(start_event, CudaStreamWaitEventFlags::DEFAULT)
+    }?;
     for (input_chunk, output_chunk) in inputs
         .chunks(l2_chunk_elems)
         .zip(outputs.chunks_mut(l2_chunk_elems))
@@ -289,10 +295,12 @@ where
             num_cols_processed += num_cols;
         }
     }
-    end_event0.record(stream0)?;
-    end_event1.record(stream1)?;
-    main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
-    main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)?;
+    if_not_dry_run! {
+        end_event0.record(stream0)?;
+        end_event1.record(stream1)?;
+        main_stream.wait_event(end_event0, CudaStreamWaitEventFlags::DEFAULT)?;
+        main_stream.wait_event(end_event1, CudaStreamWaitEventFlags::DEFAULT)
+    }?;
 
     assert_eq!(num_cols_processed, num_polys);
 
