@@ -69,6 +69,7 @@ pub fn compute_quotient_by_coset(
             alpha.clone(),
             specialized_cols_challenge_power_offset,
             quotient,
+            true,
         )?;
     }
 
@@ -84,6 +85,7 @@ pub fn compute_quotient_by_coset(
             alpha.clone(),
             general_purpose_cols_challenge_power_offset,
             quotient,
+            false,
         )?;
     }
 
