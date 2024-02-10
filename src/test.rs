@@ -1225,8 +1225,8 @@ mod zksync {
                 let num_blocks = 2560 - i * 64;
                 println!("num_blocks = {num_blocks}");
                 let ctx = ProverContext::create_limited(num_blocks).expect("gpu prover context");
-                println!("warmup");
-                proof_fn();
+                // technically not needed because CacheStrategy::get calls it internally,
+                // but nice for peace of mind
                 _setup_cache_reset();
                 let strategy =
                     CacheStrategy::get::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
@@ -1238,6 +1238,9 @@ mod zksync {
                         (),
                         worker,
                     );
+                // technically not needed because CacheStrategy::get calls it internally,
+                // but nice for peace of mind
+                _setup_cache_reset();
                 let strategy = match strategy {
                     Ok(s) => s,
                     Err(CudaError::ErrorMemoryAllocation) => {
@@ -1247,6 +1250,9 @@ mod zksync {
                     Err(e) => panic!("unexpected error: {e}"),
                 };
                 println!("strategy: {:?}", strategy);
+                println!("warmup with determined strategy");
+                proof_fn();
+                _setup_cache_reset();
                 println!("first run");
                 let start = std::time::Instant::now();
                 proof_fn();
