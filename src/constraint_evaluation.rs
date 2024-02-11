@@ -201,6 +201,7 @@ pub fn generic_evaluate_constraints_by_coset(
     challenge: EF,
     challenge_power_offset: usize,
     quotient: &mut ComplexPoly<CosetEvaluations>,
+    is_specialized: bool,
 ) -> CudaResult<()> {
     assert_eq!(variable_cols[0].domain_size(), quotient.domain_size());
 
@@ -226,6 +227,7 @@ pub fn generic_evaluate_constraints_by_coset(
         challenge_power_offset,
         quotient_as_single_slice,
         domain_size,
+        is_specialized,
     )?;
 
     Ok(())

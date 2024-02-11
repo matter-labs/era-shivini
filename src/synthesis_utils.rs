@@ -9,6 +9,7 @@ use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::reference_cs::{CSReferenceAssembly, CSReferenceImplementation};
 use boojum::cs::implementations::setup::FinalizationHintsForProver;
 use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
 use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
@@ -207,11 +208,8 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
     let geometry = circuit.geometry();
     let (max_trace_len, num_vars) = circuit.size_hint();
 
-    let builder_impl = CsReferenceImplementationBuilder::<F, P, CFG>::new(
-        geometry,
-        num_vars.unwrap(),
-        max_trace_len.unwrap(),
-    );
+    let builder_impl =
+        CsReferenceImplementationBuilder::<F, P, CFG>::new(geometry, max_trace_len.unwrap());
     let builder = new_builder::<_, F>(builder_impl);
     let round_function = ZkSyncDefaultRoundFunction::default();
 
@@ -233,12 +231,17 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
         );
     }
 
-    fn into_assembly<CFG: CSConfig, GC: GateConfigurationHolder<F>, T: StaticToolboxHolder>(
+    fn into_assembly<
+        CFG: CSConfig,
+        GC: GateConfigurationHolder<F>,
+        T: StaticToolboxHolder,
+        A: GoodAllocator,
+    >(
         mut cs: CSReferenceImplementation<F, P, CFG, GC, T>,
         do_synth: bool,
         finalization_hint: Option<&FinalizationHintsForProver>,
     ) -> (
-        CSReferenceAssembly<F, F, CFG>,
+        CSReferenceAssembly<F, F, CFG, A>,
         Option<FinalizationHintsForProver>,
     ) {
         if <CFG::SetupConfig as CSSetupConfig>::KEEP_SETUP {
@@ -255,11 +258,13 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
         }
     }
 
+    let builder_arg = num_vars.unwrap();
+
     match circuit {
         CircuitWrapper::Base(base_circuit) => match base_circuit {
             ZkSyncBaseLayerCircuit::MainVM(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -268,7 +273,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::CodeDecommittmentsSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -277,7 +282,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::CodeDecommitter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -286,7 +291,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::LogDemuxer(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -295,7 +300,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::KeccakRoundFunction(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -304,7 +309,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::Sha256RoundFunction(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -313,7 +318,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::ECRecover(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -322,7 +327,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::RAMPermutation(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -331,7 +336,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::StorageSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -340,7 +345,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::StorageApplication(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -349,7 +354,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::EventsSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -358,7 +363,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::L1MessagesSorter(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -367,7 +372,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncBaseLayerCircuit::L1MessagesHasher(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables_proxy(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_proxy(&mut cs);
@@ -378,7 +383,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
         CircuitWrapper::Recursive(recursive_circuit) => match recursive_circuit {
             ZkSyncRecursiveLayerCircuit::SchedulerCircuit(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);
@@ -387,7 +392,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             }
             ZkSyncRecursiveLayerCircuit::NodeLayerCircuit(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);
@@ -408,7 +413,7 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesSorter(inner)
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesHasher(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
-                let mut cs = builder.build(());
+                let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
                 if DO_SYNTH {
                     inner.synthesize_into_cs(&mut cs, &round_function);
