@@ -2,6 +2,7 @@ use super::*;
 use boojum_cuda::context::Context;
 use cudart::device::{device_get_attribute, get_device};
 use cudart::event::{CudaEvent, CudaEventCreateFlags};
+use cudart::slice::DeviceSlice;
 use cudart::stream::CudaStreamCreateFlags;
 use cudart_sys::CudaDeviceAttr;
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ struct ProverContextSingleton {
     setup_cache: Option<SetupCache>,
     strategy_cache: HashMap<Vec<[F; 4]>, CacheStrategy>,
     l2_cache_size: usize,
+    l2_persist_max: usize,
     compute_capability_major: u32,
     aux_streams: [CudaStream; NUM_AUX_STREAMS_AND_EVENTS],
     aux_events: [CudaEvent; NUM_AUX_STREAMS_AND_EVENTS],
@@ -45,6 +47,8 @@ impl ProverContext {
             let device_id = get_device()?;
             let l2_cache_size =
                 device_get_attribute(CudaDeviceAttr::L2CacheSize, device_id)? as usize;
+            let l2_persist_max =
+                device_get_attribute(CudaDeviceAttr::MaxPersistingL2CacheSize, device_id)? as usize;
             let compute_capability_major =
                 device_get_attribute(CudaDeviceAttr::ComputeCapabilityMajor, device_id)? as u32;
             let aux_streams = (0..NUM_AUX_STREAMS_AND_EVENTS)
@@ -69,10 +73,17 @@ impl ProverContext {
                 setup_cache: None,
                 strategy_cache: HashMap::new(),
                 l2_cache_size,
+                l2_persist_max,
                 compute_capability_major,
                 aux_streams,
                 aux_events,
             });
+            // 10 sets of powers * 2X safety margin
+            set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
+            set_l2_persistence_for_twiddles(get_stream())?;
+            for stream in _aux_streams() {
+                set_l2_persistence_for_twiddles(stream)?;
+            }
         };
         Ok(Self {})
     }
@@ -141,6 +152,47 @@ impl Drop for ProverContext {
             CONTEXT = None;
         }
     }
+}
+
+// Should some of this logic live in boojum-cuda instead?
+fn set_l2_persistence_carveout(num_bytes: usize) -> CudaResult<()> {
+    use cudart::device::device_set_limit;
+    use cudart_sys::CudaLimit;
+    let l2_persist_max = get_context().l2_persist_max;
+    let carveout = std::cmp::min(num_bytes, l2_persist_max);
+    device_set_limit(CudaLimit::PersistingL2CacheSize, carveout)?;
+    Ok(())
+}
+
+fn set_l2_persistence(data: &DeviceSlice<F>, stream: &CudaStream) -> CudaResult<()> {
+    use cudart::execution::CudaLaunchAttribute;
+    use cudart_sys::CudaAccessPolicyWindow;
+    use cudart_sys::CudaAccessProperty;
+    let num_bytes = 8 * data.len();
+    let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(CudaAccessPolicyWindow {
+        base_ptr: data.as_ptr() as *mut std::os::raw::c_void,
+        num_bytes,
+        hitRatio: 1.0,
+        hitProp: CudaAccessProperty::Persisting,
+        missProp: CudaAccessProperty::Streaming,
+    });
+    stream.set_attribute(stream_attribute)?;
+    Ok(())
+}
+
+fn set_l2_persistence_for_twiddles(stream: &CudaStream) -> CudaResult<()> {
+    let ctx = &get_context().cuda_context;
+    set_l2_persistence(ctx.powers_of_w_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_coarse.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_fine_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_coarse_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_inv_fine_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_w_inv_coarse_bitrev_for_ntt.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_f_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_f_coarse.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_i_fine.as_ref(), stream)?;
+    set_l2_persistence(ctx.powers_of_g_i_coarse.as_ref(), stream)?;
+    Ok(())
 }
 
 fn get_context() -> &'static ProverContextSingleton {
