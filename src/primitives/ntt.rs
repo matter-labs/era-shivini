@@ -150,7 +150,7 @@ fn get_l2_chunk_elems(domain_size: usize) -> usize {
     return domain_size * cols_in_l2;
 }
 
-fn l2_chunked<E>(
+fn l2_chunked_with_epilogue<E>(
     inputs: &mut [F],
     bitreversed_input: bool,
     inverse: bool,
@@ -240,7 +240,28 @@ where
     Ok(())
 }
 
-fn l2_chunked_into<E>(
+fn l2_chunked(
+    inputs: &mut [F],
+    bitreversed_input: bool,
+    inverse: bool,
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+) -> CudaResult<()> {
+    l2_chunked_with_epilogue(
+        inputs,
+        bitreversed_input,
+        inverse,
+        coset_idx,
+        domain_size,
+        lde_degree,
+        num_polys,
+        |_, _| Ok(()),
+    )
+}
+
+fn l2_chunked_with_epilogue_into<E>(
     inputs: &[F],
     outputs: &mut [F],
     bitreversed_input: bool,
@@ -336,6 +357,29 @@ where
     Ok(())
 }
 
+fn l2_chunked_into(
+    inputs: &[F],
+    outputs: &mut [F],
+    bitreversed_input: bool,
+    inverse: bool,
+    coset_idx: usize,
+    domain_size: usize,
+    lde_degree: usize,
+    num_polys: usize,
+) -> CudaResult<()> {
+    l2_chunked_with_epilogue_into(
+        inputs,
+        outputs,
+        bitreversed_input,
+        inverse,
+        coset_idx,
+        domain_size,
+        lde_degree,
+        num_polys,
+        |_, _| Ok(()),
+    )
+}
+
 #[allow(dead_code)]
 pub(crate) fn batch_ntt(
     input: &mut [F],
@@ -352,7 +396,6 @@ pub(crate) fn batch_ntt(
         domain_size,
         1,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
@@ -367,7 +410,7 @@ pub(crate) fn batch_ntt_with_epilogue<E>(
 where
     E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
-    l2_chunked(
+    l2_chunked_with_epilogue(
         input,
         bitreversed_input,
         inverse,
@@ -397,7 +440,6 @@ pub(crate) fn batch_ntt_into(
         domain_size,
         1,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
@@ -413,7 +455,7 @@ pub(crate) fn batch_ntt_with_epilogue_into<E>(
 where
     E: FnMut(&mut [F], &CudaStream) -> CudaResult<()>,
 {
-    l2_chunked_into(
+    l2_chunked_with_epilogue_into(
         inputs,
         outputs,
         bitreversed_input,
@@ -444,7 +486,6 @@ pub(crate) fn batch_coset_ntt(
         domain_size,
         lde_degree,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
@@ -468,7 +509,6 @@ pub(crate) fn batch_coset_ntt_into(
         domain_size,
         lde_degree,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
@@ -490,7 +530,6 @@ pub(crate) fn batch_inverse_coset_ntt(
         domain_size,
         lde_degree,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
@@ -514,7 +553,6 @@ pub(crate) fn batch_inverse_coset_ntt_into(
         domain_size,
         lde_degree,
         num_polys,
-        |_, _| Ok(()),
     )
 }
 
