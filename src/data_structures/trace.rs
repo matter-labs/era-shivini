@@ -3,6 +3,7 @@ use boojum::{
     field::U64Representable,
     worker::Worker,
 };
+use cudart::slice::CudaSlice;
 use std::ops::Range;
 
 use super::*;
@@ -169,7 +170,10 @@ impl GenericTraceStorage<LagrangeBasis> {
             ..
         } = witness_data;
         let mut d_variable_values = dvec!(all_values.len());
-        mem::h2d(&all_values, &mut d_variable_values)?;
+        let pending_callbacks =
+            mem::h2d_buffered(&all_values, &mut d_variable_values, domain_size / 2, worker)?;
+        get_h2d_stream().synchronize()?;
+        drop(pending_callbacks);
         let remaining_raw_storage = storage.as_single_slice_mut();
         assert_eq!(remaining_raw_storage.len(), num_polys * domain_size);
         let (variables_raw_storage, remaining_raw_storage) =
@@ -212,13 +216,17 @@ impl GenericTraceStorage<LagrangeBasis> {
             }
             let (actual_multiplicities_raw_storage, padding) =
                 multiplicities_raw_storage.split_at_mut(num_actual_multiplicities);
-            mem::h2d(
+            let pending_callbacks = mem::h2d_buffered(
                 &transformed_multiplicities,
                 actual_multiplicities_raw_storage,
+                domain_size / 2,
+                worker,
             )?;
             if !padding.is_empty() {
                 helpers::set_zero(padding)?;
             }
+            get_h2d_stream().synchronize()?;
+            drop(pending_callbacks);
         } else {
             assert!(multiplicities_raw_storage.is_empty())
         };

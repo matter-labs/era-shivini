@@ -2,12 +2,14 @@ use super::*;
 use boojum_cuda::context::Context;
 use cudart::device::{device_get_attribute, get_device};
 use cudart::event::{CudaEvent, CudaEventCreateFlags};
+use cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use cudart::slice::DeviceSlice;
 use cudart::stream::CudaStreamCreateFlags;
 use cudart_sys::CudaDeviceAttr;
 use std::collections::HashMap;
 
 pub(crate) const NUM_AUX_STREAMS_AND_EVENTS: usize = 4;
+pub(crate) const AUX_H2D_BUFFER_SIZE: usize = 1 << 24; // 16 MB
 
 #[allow(dead_code)]
 struct ProverContextSingleton {
@@ -26,6 +28,7 @@ struct ProverContextSingleton {
     compute_capability_major: u32,
     aux_streams: [CudaStream; NUM_AUX_STREAMS_AND_EVENTS],
     aux_events: [CudaEvent; NUM_AUX_STREAMS_AND_EVENTS],
+    aux_h2d_buffer: HostAllocation<u8>,
 }
 
 static mut CONTEXT: Option<ProverContextSingleton> = None;
@@ -53,14 +56,16 @@ impl ProverContext {
                 device_get_attribute(CudaDeviceAttr::ComputeCapabilityMajor, device_id)? as u32;
             let aux_streams = (0..NUM_AUX_STREAMS_AND_EVENTS)
                 .map(|_| CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING))
-                .collect::<CudaResult<Vec<CudaStream>>>()?
+                .collect::<CudaResult<Vec<_>>>()?
                 .try_into()
                 .unwrap();
             let aux_events = (0..NUM_AUX_STREAMS_AND_EVENTS)
                 .map(|_| CudaEvent::create_with_flags(CudaEventCreateFlags::DISABLE_TIMING))
-                .collect::<CudaResult<Vec<CudaEvent>>>()?
+                .collect::<CudaResult<Vec<_>>>()?
                 .try_into()
                 .unwrap();
+            let aux_h2d_buffer =
+                HostAllocation::alloc(AUX_H2D_BUFFER_SIZE, CudaHostAllocFlags::DEFAULT)?;
             CONTEXT = Some(ProverContextSingleton {
                 cuda_context,
                 exec_stream: Stream::create()?,
@@ -77,6 +82,7 @@ impl ProverContext {
                 compute_capability_major,
                 aux_streams,
                 aux_events,
+                aux_h2d_buffer,
             });
             // 10 sets of powers * 2X safety margin
             set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
@@ -294,4 +300,8 @@ pub(crate) fn _aux_streams() -> &'static [CudaStream; NUM_AUX_STREAMS_AND_EVENTS
 
 pub(crate) fn _aux_events() -> &'static [CudaEvent; NUM_AUX_STREAMS_AND_EVENTS] {
     &get_context().aux_events
+}
+
+pub(crate) fn _aux_h2d_buffer() -> &'static mut HostAllocation<u8> {
+    &mut get_context_mut().aux_h2d_buffer
 }
