@@ -8,7 +8,7 @@ use boojum::cs::implementations::proof::Proof;
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::reference_cs::{CSReferenceAssembly, CSReferenceImplementation};
 use boojum::cs::implementations::setup::FinalizationHintsForProver;
-use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::implementations::verifier::{VerificationKey, Verifier};
 use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
@@ -123,7 +123,12 @@ impl CircuitWrapper {
         vk: &VerificationKey<F, DefaultTreeHasher>,
         proof: &ZksyncProof,
     ) -> bool {
-        let verifier = match self {
+        let verifier = self.get_verifier();
+        verifier.verify::<DefaultTreeHasher, DefaultTranscript, NoPow>((), vk, proof)
+    }
+
+    pub(crate) fn get_verifier(&self) -> Verifier<F, EXT> {
+        match self {
             CircuitWrapper::Base(_base_circuit) => {
                 use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
 
@@ -137,9 +142,7 @@ impl CircuitWrapper {
                 let verifier_builder = recursive_circuit.into_dyn_verifier_builder();
                 verifier_builder.create_verifier()
             }
-        };
-
-        verifier.verify::<DefaultTreeHasher, DefaultTranscript, NoPow>((), vk, proof)
+        }
     }
 }
 
