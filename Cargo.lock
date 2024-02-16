@@ -262,14 +262,14 @@ checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 [[package]]
 name = "boojum"
 version = "0.2.0"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#03888f0fbf810a18e98d010dd11891fe32097352"
+source = "git+https://github.com/matter-labs/era-boojum?branch=main#30300f043c9afaeeb35d0f7bd3cc0acaf69ccde4"
 dependencies = [
  "arrayvec 0.7.4",
  "bincode",
  "blake2 0.10.6",
  "const_format",
  "convert_case",
- "crossbeam 0.8.4",
+ "crossbeam 0.7.3",
  "crypto-bigint",
  "cs_derive",
  "derivative",
@@ -604,7 +604,7 @@ dependencies = [
 [[package]]
 name = "cs_derive"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#03888f0fbf810a18e98d010dd11891fe32097352"
+source = "git+https://github.com/matter-labs/era-boojum?branch=main#30300f043c9afaeeb35d0f7bd3cc0acaf69ccde4"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.78",
@@ -1955,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "shivini"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bincode",
  "blake2 0.10.6",

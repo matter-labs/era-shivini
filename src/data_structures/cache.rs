@@ -1,12 +1,9 @@
-use boojum::config::ProvingCSConfig;
 use boojum::cs::implementations::pow::PoWRunner;
 use boojum::cs::implementations::prover::ProofConfig;
-use boojum::cs::implementations::reference_cs::CSReferenceAssembly;
 use boojum::cs::implementations::transcript::Transcript;
-use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::implementations::verifier::{VerificationKey, VerificationKeyCircuitGeometry};
 use boojum::cs::implementations::witness::WitnessVec;
 use boojum::cs::oracle::TreeHasher;
-use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 use boojum::worker::Worker;
 use cudart_sys::CudaError::ErrorMemoryAllocation;
 use std::collections::BTreeMap;
@@ -48,6 +45,7 @@ impl StorageCacheStrategy {
 }
 
 use crate::cs::GpuSetup;
+use crate::gpu_proof_config::GpuProofConfig;
 use crate::prover::{
     compute_quotient_degree, gpu_prove_from_external_witness_data_with_cache_strategy,
 };
@@ -496,13 +494,12 @@ pub(crate) struct CacheStrategy {
 
 impl CacheStrategy {
     pub(crate) fn get<
-        P: PrimeFieldLikeVectorized<Base = F>,
         TR: Transcript<F, CompatibleCap = [F; 4]>,
         H: TreeHasher<F, Output = TR::CompatibleCap>,
         POW: PoWRunner,
         A: GoodAllocator,
     >(
-        cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+        config: &GpuProofConfig,
         external_witness_data: &WitnessVec<F>,
         proof_config: ProofConfig,
         setup: &GpuSetup<A>,
@@ -515,13 +512,14 @@ impl CacheStrategy {
             println!("reusing cache strategy");
             Ok(*strategy)
         } else {
-            let strategies = Self::get_strategy_candidates(cs, &proof_config, setup);
+            let strategies =
+                Self::get_strategy_candidates(config, &proof_config, setup, &vk.fixed_parameters);
             for (_, strategy) in strategies.iter().copied() {
                 _setup_cache_reset();
                 dry_run_start();
                 let result =
-                    gpu_prove_from_external_witness_data_with_cache_strategy::<P, TR, H, POW, A>(
-                        cs,
+                    gpu_prove_from_external_witness_data_with_cache_strategy::<TR, H, POW, A>(
+                        config,
                         external_witness_data,
                         proof_config.clone(),
                         setup,
@@ -548,27 +546,30 @@ impl CacheStrategy {
         }
     }
 
-    pub(crate) fn get_strategy_candidates<
-        P: PrimeFieldLikeVectorized<Base = F>,
-        A: GoodAllocator,
-    >(
-        cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    pub(crate) fn get_strategy_candidates<A: GoodAllocator>(
+        config: &GpuProofConfig,
         proof_config: &ProofConfig,
         setup: &GpuSetup<A>,
+        geometry: &VerificationKeyCircuitGeometry,
     ) -> Vec<((usize, usize), CacheStrategy)> {
         let fri_lde_degree = proof_config.fri_lde_factor;
-        let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+        let quotient_degree = compute_quotient_degree(&config, &setup.selectors_placement);
         let used_lde_degree = usize::max(quotient_degree, fri_lde_degree);
         let setup_layout = setup.layout;
+        let domain_size = geometry.domain_size as usize;
+        let lookup_parameters = geometry.lookup_parameters;
+        let total_tables_len = geometry.total_tables_len as usize;
+        let num_multiplicity_cols =
+            lookup_parameters.num_multipicities_polys(total_tables_len, domain_size);
         let trace_layout = TraceLayout {
             num_variable_cols: setup.variables_hint.len(),
             num_witness_cols: setup.witnesses_hint.len(),
-            num_multiplicity_cols: cs.num_multipicities_polys(),
+            num_multiplicity_cols,
         };
         let arguments_layout = ArgumentsLayout::from_trace_layout_and_lookup_params(
             trace_layout,
             quotient_degree,
-            cs.lookup_parameters.clone(),
+            geometry.lookup_parameters,
         );
         let setup_num_polys = setup_layout.num_polys();
         let trace_num_polys = trace_layout.num_polys();
