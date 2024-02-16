@@ -1,4 +1,6 @@
-use crate::synthesis_utils::CircuitWrapper;
+use crate::synthesis_utils::{
+    get_verifier_for_base_layer_circuit, get_verifier_for_recursive_layer_circuit,
+};
 use boojum::config::ProvingCSConfig;
 use boojum::cs::implementations::reference_cs::CSReferenceAssembly;
 use boojum::cs::implementations::verifier::{
@@ -144,23 +146,21 @@ impl GpuProofConfig {
             placement_strategies,
         }
     }
-}
 
-impl From<CircuitWrapper> for GpuProofConfig {
-    fn from(value: CircuitWrapper) -> Self {
-        let verifier = value.get_verifier();
-        Self::from_verifier(&verifier)
+    pub fn from_base_layer_circuit(circuit: &BaseLayerCircuit) -> Self {
+        Self::from_verifier(&get_verifier_for_base_layer_circuit(circuit))
     }
-}
 
-impl From<BaseLayerCircuit> for GpuProofConfig {
-    fn from(value: BaseLayerCircuit) -> Self {
-        CircuitWrapper::Base(value).into()
+    pub fn from_recursive_layer_circuit(circuit: &ZkSyncRecursiveLayerCircuit) -> Self {
+        Self::from_verifier(&get_verifier_for_recursive_layer_circuit(circuit))
     }
-}
 
-impl From<ZkSyncRecursiveLayerCircuit> for GpuProofConfig {
-    fn from(value: ZkSyncRecursiveLayerCircuit) -> Self {
-        CircuitWrapper::Recursive(value).into()
+    #[cfg(test)]
+    pub(crate) fn from_circuit_wrapper(wrapper: &crate::synthesis_utils::CircuitWrapper) -> Self {
+        use crate::synthesis_utils::CircuitWrapper::*;
+        match wrapper {
+            Base(circuit) => Self::from_base_layer_circuit(circuit),
+            Recursive(circuit) => Self::from_recursive_layer_circuit(circuit),
+        }
     }
 }

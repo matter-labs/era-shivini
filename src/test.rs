@@ -983,7 +983,7 @@ mod zksync {
                 let gpu_proof = {
                     let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
                     let witness = proving_cs.witness.unwrap();
-                    let config = circuit.clone().into();
+                    let config = GpuProofConfig::from_circuit_wrapper(&circuit);
                     let proof = gpu_prove_from_external_witness_data::<
                         DefaultTranscript,
                         DefaultTreeHasher,
@@ -1131,7 +1131,7 @@ mod zksync {
         println!("gpu proving");
         let gpu_proof = {
             let witness = proving_cs.witness.as_ref().unwrap();
-            let config = circuit.clone().into();
+            let config = GpuProofConfig::from_circuit_wrapper(&circuit);
             gpu_prove_from_external_witness_data::<
                 DefaultTranscript,
                 DefaultTreeHasher,
@@ -1193,7 +1193,7 @@ mod zksync {
         );
         let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
         let witness = proving_cs.witness.unwrap();
-        let config = circuit.into();
+        let config = GpuProofConfig::from_circuit_wrapper(&circuit);
         let gpu_setup = {
             let _ctx = ProverContext::create().expect("gpu prover context");
             GpuSetup::<Global>::from_setup_and_hints(

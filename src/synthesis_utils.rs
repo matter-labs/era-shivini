@@ -129,21 +129,26 @@ impl CircuitWrapper {
 
     pub(crate) fn get_verifier(&self) -> Verifier<F, EXT> {
         match self {
-            CircuitWrapper::Base(_base_circuit) => {
-                use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
-
-                let verifier_builder =
-                    dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
-                        self.numeric_circuit_type(),
-                    );
-                verifier_builder.create_verifier()
-            }
-            CircuitWrapper::Recursive(recursive_circuit) => {
-                let verifier_builder = recursive_circuit.into_dyn_verifier_builder();
-                verifier_builder.create_verifier()
-            }
+            CircuitWrapper::Base(circuit) => get_verifier_for_base_layer_circuit(circuit),
+            CircuitWrapper::Recursive(circuit) => get_verifier_for_recursive_layer_circuit(circuit),
         }
     }
+}
+
+pub(crate) fn get_verifier_for_base_layer_circuit(circuit: &BaseLayerCircuit) -> Verifier<F, EXT> {
+    use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
+    let verifier_builder =
+        dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
+            circuit.numeric_circuit_type(),
+        );
+    verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_recursive_layer_circuit(
+    circuit: &ZkSyncRecursiveLayerCircuit,
+) -> Verifier<F, EXT> {
+    let verifier_builder = circuit.into_dyn_verifier_builder();
+    verifier_builder.create_verifier()
 }
 
 #[allow(dead_code)]
