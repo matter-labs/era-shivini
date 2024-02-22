@@ -926,7 +926,7 @@ mod zksync {
         let worker = &Worker::new();
         let _ctx = ProverContext::create().expect("gpu prover context");
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "eip4844"] {
             let data_dir = format!("./test_data/{}", main_dir);
             dbg!(&data_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
@@ -1019,7 +1019,7 @@ mod zksync {
     fn generate_reference_proofs_for_all_zksync_circuits() {
         let worker = &Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "eip4844"] {
             let data_dir = format!("./test_data/{}", main_dir);
             dbg!(&data_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
@@ -1374,7 +1374,7 @@ mod zksync {
     fn test_generate_reference_setups_for_all_zksync_circuits() {
         let _worker = Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "eip4844"] {
             let data_dir = format!("./test_data/{}", main_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
 
@@ -1412,7 +1412,7 @@ mod zksync {
         let _ctx = ProverContext::create().expect("gpu context");
         let worker = &Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "eip4844"] {
             let data_dir = format!("{}/{}", TEST_DATA_ROOT_DIR, main_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
 
