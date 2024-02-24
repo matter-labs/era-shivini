@@ -354,7 +354,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "circuit_definitions"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.4.1#5a92455120190e9af10e2b5d4a7e6a9f7a246db5"
+source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.4.2#d9da285c2e8a5fedddd2e9c2a893769ebd12a6ed"
 dependencies = [
  "crossbeam 0.8.4",
  "derivative",
