@@ -1193,9 +1193,8 @@ mod zksync {
         );
         let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
         let witness = proving_cs.witness.unwrap();
-        let config = GpuProofConfig::from_circuit_wrapper(&circuit);
+        let _ctx = ProverContext::create().expect("gpu prover context");
         let gpu_setup = {
-            let _ctx = ProverContext::create().expect("gpu prover context");
             GpuSetup::<Global>::from_setup_and_hints(
                 setup_base.clone(),
                 clone_reference_tree(&setup_tree),
@@ -1206,6 +1205,12 @@ mod zksync {
             .expect("gpu setup")
         };
         let proof_fn = || {
+            let timer = std::time::Instant::now();
+            let config = GpuProofConfig::from_circuit_wrapper(&circuit);
+            println!(
+                "GpuProofConfig::from_circuit_wrapper: {:?}",
+                timer.elapsed()
+            );
             let _ = gpu_prove_from_external_witness_data::<
                 DefaultTranscript,
                 DefaultTreeHasher,
@@ -1223,48 +1228,18 @@ mod zksync {
             .expect("gpu proof");
         };
         loop {
-            for i in 0..40 {
-                let num_blocks = 2560 - i * 64;
-                println!("num_blocks = {num_blocks}");
-                let ctx = ProverContext::create_limited(num_blocks).expect("gpu prover context");
-                // technically not needed because CacheStrategy::get calls it internally,
-                // but nice for peace of mind
-                _setup_cache_reset();
-                let strategy =
-                    CacheStrategy::get::<DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-                        &config,
-                        &witness,
-                        proof_cfg.clone(),
-                        &gpu_setup,
-                        &vk,
-                        (),
-                        worker,
-                    );
-                // technically not needed because CacheStrategy::get calls it internally,
-                // but nice for peace of mind
-                _setup_cache_reset();
-                let strategy = match strategy {
-                    Ok(s) => s,
-                    Err(CudaError::ErrorMemoryAllocation) => {
-                        println!("no cache strategy for {num_blocks}  found");
-                        return;
-                    }
-                    Err(e) => panic!("unexpected error: {e}"),
-                };
-                println!("strategy: {:?}", strategy);
-                println!("warmup with determined strategy");
-                proof_fn();
-                _setup_cache_reset();
-                println!("first run");
-                let start = std::time::Instant::now();
-                proof_fn();
-                println!("◆ total: {:?}", start.elapsed());
-                println!("second run");
-                let start = std::time::Instant::now();
-                proof_fn();
-                println!("◆ total: {:?}", start.elapsed());
-                drop(ctx);
-            }
+            _setup_cache_reset();
+            println!("warmup");
+            proof_fn();
+            _setup_cache_reset();
+            println!("first run");
+            let start = std::time::Instant::now();
+            proof_fn();
+            println!("◆ total: {:?}", start.elapsed());
+            println!("second run");
+            let start = std::time::Instant::now();
+            proof_fn();
+            println!("◆ total: {:?}", start.elapsed());
         }
     }
 

@@ -36,6 +36,7 @@ type EIP4844Circuit = circuit_definitions::circuit_definitions::eip4844::EIP4844
     F,
     ZkSyncDefaultRoundFunction,
 >;
+
 #[allow(dead_code)]
 type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 #[allow(dead_code)]
@@ -158,6 +159,7 @@ impl CircuitWrapper {
         match self {
             CircuitWrapper::Base(circuit) => get_verifier_for_base_layer_circuit(circuit),
             CircuitWrapper::Recursive(circuit) => get_verifier_for_recursive_layer_circuit(circuit),
+            CircuitWrapper::EIP4844(circuit) => get_verifier_for_eip4844_circuit(circuit),
         }
     }
 }
@@ -174,15 +176,13 @@ pub(crate) fn get_verifier_for_base_layer_circuit(circuit: &BaseLayerCircuit) ->
 pub(crate) fn get_verifier_for_recursive_layer_circuit(
     circuit: &ZkSyncRecursiveLayerCircuit,
 ) -> Verifier<F, EXT> {
-    EIP4844VerifierBuilder::<F, ZkSyncDefaultRoundFunction>::dyn_verifier_builder()
-        .create_verifier()
-}
-
-pub(crate) fn get_verifier_for_eip4844_circuit(
-    circuit: &ZkSyncRecursiveLayerCircuit,
-) -> Verifier<F, EXT> {
     let verifier_builder = circuit.into_dyn_verifier_builder();
     verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_eip4844_circuit(_circuit: &EIP4844Circuit) -> Verifier<F, EXT> {
+    EIP4844VerifierBuilder::<F, ZkSyncDefaultRoundFunction>::dyn_verifier_builder()
+        .create_verifier()
 }
 
 #[allow(dead_code)]

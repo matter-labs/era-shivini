@@ -1,6 +1,4 @@
-use crate::synthesis_utils::{
-    get_verifier_for_base_layer_circuit, get_verifier_for_recursive_layer_circuit,
-};
+use crate::synthesis_utils::{get_verifier_for_base_layer_circuit, get_verifier_for_eip4844_circuit, get_verifier_for_recursive_layer_circuit};
 use boojum::config::ProvingCSConfig;
 use boojum::cs::implementations::reference_cs::CSReferenceAssembly;
 use boojum::cs::implementations::verifier::{
@@ -23,6 +21,10 @@ use std::collections::HashMap;
 type F = GoldilocksField;
 type EXT = GoldilocksExt2;
 type BaseLayerCircuit = ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
+type EIP4844Circuit = circuit_definitions::circuit_definitions::eip4844::EIP4844Circuit<
+    F,
+    ZkSyncDefaultRoundFunction,
+>;
 
 pub(crate) struct EvaluatorData {
     pub debug_name: String,
@@ -155,12 +157,17 @@ impl GpuProofConfig {
         Self::from_verifier(&get_verifier_for_recursive_layer_circuit(circuit))
     }
 
+    pub fn from_eip4844_circuit(circuit: &EIP4844Circuit) -> Self {
+        Self::from_verifier(&get_verifier_for_eip4844_circuit(circuit))
+    }
+
     #[cfg(test)]
     pub(crate) fn from_circuit_wrapper(wrapper: &crate::synthesis_utils::CircuitWrapper) -> Self {
         use crate::synthesis_utils::CircuitWrapper::*;
         match wrapper {
             Base(circuit) => Self::from_base_layer_circuit(circuit),
             Recursive(circuit) => Self::from_recursive_layer_circuit(circuit),
+            EIP4844(circuit) => Self::from_eip4844_circuit(circuit),
         }
     }
 }
