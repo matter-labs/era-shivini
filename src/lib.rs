@@ -42,6 +42,7 @@ use copy_permutation::*;
 use data_structures::*;
 use lookup::*;
 use poly::*;
+pub mod gpu_proof_config;
 mod prover;
 mod quotient;
 #[cfg(feature = "zksync")]
