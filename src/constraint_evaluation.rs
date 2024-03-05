@@ -1,31 +1,20 @@
-use boojum::{
-    config::CSConfig,
-    cs::{
-        gates::lookup_marker::LookupFormalGate,
-        implementations::{reference_cs::CSReferenceAssembly, setup::TreeNode},
-        traits::{evaluator::PerChunkOffset, gate::GatePlacementStrategy},
-    },
+use crate::gpu_proof_config::GpuProofConfig;
+use boojum::cs::{
+    gates::lookup_marker::LookupFormalGate,
+    implementations::setup::TreeNode,
+    traits::{evaluator::PerChunkOffset, gate::GatePlacementStrategy},
 };
 
 use super::*;
 
-pub fn get_evaluators_of_general_purpose_cols<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    CFG: CSConfig,
->(
-    cs: &CSReferenceAssembly<F, P, CFG>,
+pub fn get_evaluators_of_general_purpose_cols(
+    config: &GpuProofConfig,
     selectors_placement: &TreeNode,
 ) -> Vec<GateEvaluationParams> {
     let mut gates = vec![];
-    for (evaluator_idx, (evaluator, _gate_type_id)) in cs
-        .evaluation_data_over_general_purpose_columns
+    for (evaluator_idx, evaluator) in config
         .evaluators_over_general_purpose_columns
         .iter()
-        .zip(
-            cs.evaluation_data_over_general_purpose_columns
-                .gate_type_ids_for_general_purpose_columns
-                .iter(),
-        )
         .enumerate()
     {
         if evaluator.debug_name
@@ -72,34 +61,21 @@ pub fn get_evaluators_of_general_purpose_cols<
     gates
 }
 
-pub fn get_specialized_evaluators_from_assembly<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
-    CFG: CSConfig,
->(
-    cs: &CSReferenceAssembly<F, P, CFG>,
+pub fn get_specialized_evaluators_from_assembly(
+    config: &GpuProofConfig,
     selectors_placement: &TreeNode,
 ) -> Vec<GateEvaluationParams> {
-    if cs
-        .evaluation_data_over_specialized_columns
-        .evaluators_over_specialized_columns
-        .len()
-        < 1
-    {
+    if config.evaluators_over_specialized_columns.len() < 1 {
         return vec![];
     }
 
     let (_deg, _constants_for_gates_over_general_purpose_columns) =
         selectors_placement.compute_stats();
     let mut gates = vec![];
-    for (idx, (evaluator, gate_type_id)) in cs
-        .evaluation_data_over_specialized_columns
+    for (idx, (evaluator, gate_type_id)) in config
         .evaluators_over_specialized_columns
         .iter()
-        .zip(
-            cs.evaluation_data_over_specialized_columns
-                .gate_type_ids_for_specialized_columns
-                .iter(),
-        )
+        .zip(config.gate_type_ids_for_specialized_columns.iter())
         .enumerate()
     {
         if evaluator.debug_name
@@ -120,7 +96,7 @@ pub fn get_specialized_evaluators_from_assembly<
         );
 
         let num_terms = evaluator.num_quotient_terms;
-        let placement_strategy = cs
+        let placement_strategy = config
             .placement_strategies
             .get(&gate_type_id)
             .copied()
@@ -136,9 +112,8 @@ pub fn get_specialized_evaluators_from_assembly<
 
         let total_terms = num_terms * num_repetitions;
 
-        let (initial_offset, per_repetition_offset, total_constants_available) = cs
-            .evaluation_data_over_specialized_columns
-            .offsets_for_specialized_evaluators[idx];
+        let (initial_offset, per_repetition_offset, total_constants_available) =
+            config.offsets_for_specialized_evaluators[idx];
 
         let _placement_data = (
             num_repetitions,
