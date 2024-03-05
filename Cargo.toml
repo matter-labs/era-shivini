@@ -10,7 +10,7 @@ boojum = { git = "https://github.com/matter-labs/era-boojum", branch = "main" }
 boojum-cuda = { git = "https://github.com/matter-labs/era-boojum-cuda", branch = "main" }
 cudart = { git = "https://github.com/matter-labs/era-cuda", branch = "main", package = "cudart" }
 cudart-sys = { git = "https://github.com/matter-labs/era-cuda", branch = "main", package = "cudart-sys" }
-circuit_definitions = { git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.4.1", package = "circuit_definitions", optional = true }
+circuit_definitions = { git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.5.0", package = "circuit_definitions", optional = true }
 
 rand = "0.8"
 smallvec = { version = "1.13", features = [
