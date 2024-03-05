@@ -2,7 +2,6 @@ use std::alloc::Global;
 use std::rc::Rc;
 
 use boojum::{
-    config::ProvingCSConfig,
     cs::{
         gates::lookup_marker::LookupFormalGate,
         implementations::{
@@ -10,7 +9,6 @@ use boojum::{
             pow::{NoPow, PoWRunner},
             proof::{OracleQuery, Proof, SingleRoundQueries},
             prover::ProofConfig,
-            reference_cs::CSReferenceAssembly,
             setup::TreeNode,
             transcript::Transcript,
             utils::{domain_generator_for_size, materialize_powers_serial},
@@ -26,6 +24,7 @@ use boojum::{
 };
 
 use crate::cs::GpuSetup;
+use crate::gpu_proof_config::GpuProofConfig;
 use crate::{
     arith::{deep_quotient_except_public_inputs, deep_quotient_public_input},
     cs::PACKED_PLACEHOLDER_BITMASK,
@@ -34,14 +33,12 @@ use crate::{
 use super::*;
 
 pub fn gpu_prove_from_external_witness_data<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     TR: Transcript<F, CompatibleCap = [F; 4]>,
     H: TreeHasher<F, Output = TR::CompatibleCap>,
     POW: PoWRunner,
     A: GoodAllocator,
 >(
-    // service layer reuses assembly for repeated proving, so that just borrow it
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    config: &GpuProofConfig,
     external_witness_data: &WitnessVec<F>, // TODO: read data from Assembly pinned storage
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
@@ -49,8 +46,8 @@ pub fn gpu_prove_from_external_witness_data<
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
 ) -> CudaResult<GpuProof<A>> {
-    let cache_strategy = CacheStrategy::get::<P, TR, H, POW, A>(
-        cs,
+    let cache_strategy = CacheStrategy::get::<TR, H, POW, A>(
+        config,
         external_witness_data,
         proof_config.clone(),
         setup,
@@ -58,8 +55,8 @@ pub fn gpu_prove_from_external_witness_data<
         transcript_params.clone(),
         worker,
     )?;
-    gpu_prove_from_external_witness_data_with_cache_strategy::<P, TR, H, POW, A>(
-        cs,
+    gpu_prove_from_external_witness_data_with_cache_strategy::<TR, H, POW, A>(
+        config,
         external_witness_data,
         proof_config,
         setup,
@@ -71,14 +68,12 @@ pub fn gpu_prove_from_external_witness_data<
 }
 
 pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     TR: Transcript<F, CompatibleCap = [F; 4]>,
     H: TreeHasher<F, Output = TR::CompatibleCap>,
     POW: PoWRunner,
     A: GoodAllocator,
 >(
-    // service layer reuses assembly for repeated proving, so that just borrow it
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    config: &GpuProofConfig,
     external_witness_data: &WitnessVec<F>, // TODO: read data from Assembly pinned storage
     proof_config: ProofConfig,
     setup: &GpuSetup<A>,
@@ -89,11 +84,6 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
 ) -> CudaResult<GpuProof<A>> {
     let mut timer = std::time::Instant::now();
     let result = {
-        assert_eq!(
-            cs.next_available_place_idx(),
-            0,
-            "CS should be empty and hold no data"
-        );
         assert!(
             is_prover_context_initialized(),
             "prover context should be initialized"
@@ -101,10 +91,14 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
 
         let num_variable_cols = setup.variables_hint.len();
         let num_witness_cols = setup.witnesses_hint.len();
-        let num_multiplicity_cols = cs.num_multipicities_polys();
-        let domain_size = cs.max_trace_len;
+        let geometry = vk.fixed_parameters.clone();
+        let domain_size = geometry.domain_size as usize;
+        let lookup_parameters = geometry.lookup_parameters;
+        let total_tables_len = geometry.total_tables_len as usize;
+        let num_multiplicity_cols =
+            lookup_parameters.num_multipicities_polys(total_tables_len, domain_size);
         let fri_lde_degree = proof_config.fri_lde_factor;
-        let quotient_degree = compute_quotient_degree(&cs, &setup.selectors_placement);
+        let quotient_degree = compute_quotient_degree(config, &setup.selectors_placement);
         let used_lde_degree = usize::max(quotient_degree, fri_lde_degree);
         let cap_size = setup.setup_tree.cap_size;
         let setup_cache = SetupCache::new_from_gpu_setup(
@@ -135,7 +129,7 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
         let arguments_layout = ArgumentsLayout::from_trace_layout_and_lookup_params(
             trace_layout,
             quotient_degree,
-            cs.lookup_parameters.clone(),
+            lookup_parameters,
         );
         let mut arguments_cache = ArgumentsCache::new(
             cache_strategy.arguments,
@@ -156,7 +150,7 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
             &setup_cache.aux.variable_indexes,
             &setup_cache.aux.witness_indexes,
             &external_witness_data,
-            &cs.lookup_parameters,
+            &lookup_parameters,
             worker,
             trace_evaluations_storage,
         )?;
@@ -190,8 +184,8 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
             let value = external_witness_data.all_values[variable_idx];
             public_inputs_with_locations.push((col, row, value));
         }
-        gpu_prove_from_trace::<_, TR, _, NoPow, _>(
-            cs,
+        gpu_prove_from_trace::<TR, _, NoPow, _>(
+            config,
             public_inputs_with_locations,
             setup,
             setup_cache,
@@ -211,12 +205,7 @@ pub(crate) fn gpu_prove_from_external_witness_data_with_cache_strategy<
     result
 }
 
-pub fn compute_quotient_degree<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
->(
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
-    selectors_placement: &TreeNode,
-) -> usize {
+pub fn compute_quotient_degree(config: &GpuProofConfig, selectors_placement: &TreeNode) -> usize {
     let (max_constraint_contribution_degree, _number_of_constant_polys) =
         selectors_placement.compute_stats();
 
@@ -227,8 +216,7 @@ pub fn compute_quotient_degree<
         0
     };
 
-    let max_degree_from_specialized_gates = cs
-        .evaluation_data_over_specialized_columns
+    let max_degree_from_specialized_gates = config
         .evaluators_over_specialized_columns
         .iter()
         .map(|el| el.max_constraint_degree - 1)
@@ -250,13 +238,12 @@ pub fn compute_quotient_degree<
 }
 
 fn gpu_prove_from_trace<
-    P: boojum::field::traits::field_like::PrimeFieldLikeVectorized<Base = F>,
     TR: Transcript<F, CompatibleCap = [F; 4]>,
     H: TreeHasher<F, Output = TR::CompatibleCap>,
     POW: PoWRunner,
     A: GoodAllocator,
 >(
-    cs: &CSReferenceAssembly<F, P, ProvingCSConfig>,
+    config: &GpuProofConfig,
     public_inputs_with_locations: Vec<(usize, usize, F)>,
     setup_base: &GpuSetup<A>,
     setup_cache: &mut SetupCache,
@@ -269,9 +256,16 @@ fn gpu_prove_from_trace<
     transcript_params: TR::TransciptParameters,
     worker: &Worker,
 ) -> CudaResult<GpuProof<A>> {
+    let geometry = vk.fixed_parameters.clone();
+    let domain_size = geometry.domain_size as usize;
+    let lookup_parameters = geometry.lookup_parameters;
+    let total_tables_len = geometry.total_tables_len as usize;
+    let num_multiplicity_cols =
+        lookup_parameters.num_multipicities_polys(total_tables_len, domain_size);
+    assert!(domain_size.is_power_of_two());
+    assert_eq!(setup_evaluations.domain_size, domain_size);
     assert!(proof_config.fri_lde_factor.is_power_of_two());
     assert!(proof_config.fri_lde_factor > 1);
-    assert!(cs.max_trace_len.is_power_of_two());
 
     let cap_size = proof_config.merkle_tree_cap_size;
     assert!(cap_size > 0);
@@ -285,10 +279,8 @@ fn gpu_prove_from_trace<
     }
 
     let selectors_placement = setup_base.selectors_placement.clone();
-    let domain_size = cs.max_trace_len; // counted in elements of P
-    assert_eq!(setup_base.constant_columns[0].len(), domain_size);
 
-    let quotient_degree = compute_quotient_degree(&cs, &selectors_placement);
+    let quotient_degree = compute_quotient_degree(config, &selectors_placement);
     let fri_lde_degree = proof_config.fri_lde_factor;
     let used_lde_degree = std::cmp::max(fri_lde_degree, quotient_degree);
 
@@ -367,7 +359,7 @@ fn gpu_prove_from_trace<
     let num_intermediate_partial_product_relations =
         argument_raw_storage.as_polynomials().partial_products.len();
 
-    let (lookup_beta, powers_of_gamma_for_lookup) = if cs.lookup_parameters
+    let (lookup_beta, powers_of_gamma_for_lookup) = if geometry.lookup_parameters
         != LookupParameters::NoLookup
     {
         let h_lookup_beta = if is_dry_run()? {
@@ -391,16 +383,16 @@ fn gpu_prove_from_trace<
             .output_placement(lookup_evaluator_id)
             .expect("lookup gate must be placed");
 
-        let variables_offset = cs.parameters.num_columns_under_copy_permutation;
+        let variables_offset = geometry.parameters.num_columns_under_copy_permutation;
 
         #[allow(unreachable_code)]
-        let powers_of_gamma = match cs.lookup_parameters {
+        let powers_of_gamma = match geometry.lookup_parameters {
             LookupParameters::NoLookup => {
                 unreachable!()
             }
             LookupParameters::TableIdAsConstant { .. }
             | LookupParameters::TableIdAsVariable { .. } => {
-                let columns_per_subargument = cs.lookup_parameters.columns_per_subargument();
+                let columns_per_subargument = geometry.lookup_parameters.columns_per_subargument();
 
                 let mut h_powers_of_gamma = vec![];
                 let mut current = EF::ONE;
@@ -432,14 +424,12 @@ fn gpu_prove_from_trace<
             | a @ LookupParameters::UseSpecializedColumnsWithTableIdAsConstant { width, .. } => {
                 // ensure proper setup
                 assert_eq!(
-                    cs.evaluation_data_over_specialized_columns
-                        .gate_type_ids_for_specialized_columns[0],
+                    config.gate_type_ids_for_specialized_columns[0],
                     std::any::TypeId::of::<LookupFormalGate>(),
                     "we expect first specialized gate to be the lookup -"
                 );
-                let (initial_offset, offset_per_repetition, _) = cs
-                    .evaluation_data_over_specialized_columns
-                    .offsets_for_specialized_evaluators[0];
+                let (initial_offset, offset_per_repetition, _) =
+                    config.offsets_for_specialized_evaluators[0];
                 assert_eq!(initial_offset.constants_offset, 0);
 
                 if let LookupParameters::UseSpecializedColumnsWithTableIdAsConstant {
@@ -469,7 +459,7 @@ fn gpu_prove_from_trace<
                     &lookup_beta,
                     &powers_of_gamma,
                     variables_offset,
-                    cs.lookup_parameters,
+                    lookup_parameters,
                     &mut argument_raw_storage,
                 )?;
 
@@ -497,21 +487,17 @@ fn gpu_prove_from_trace<
     let h_alpha = ExtensionField::<F, 2, EXT>::from_coeff_in_base(h_alpha);
     let _alpha: DExt = h_alpha.into();
 
-    let num_lookup_subarguments = cs.num_sublookup_arguments();
-    let num_multiplicities_polys = cs.num_multipicities_polys();
+    let num_lookup_subarguments =
+        lookup_parameters.num_sublookup_arguments_for_geometry(&geometry.parameters);
+    let num_multiplicities_polys = num_multiplicity_cols;
     let total_num_lookup_argument_terms = num_lookup_subarguments + num_multiplicities_polys;
 
-    let total_num_gate_terms_for_specialized_columns = cs
-        .evaluation_data_over_specialized_columns
+    let total_num_gate_terms_for_specialized_columns = config
         .evaluators_over_specialized_columns
         .iter()
-        .zip(
-            cs.evaluation_data_over_specialized_columns
-                .gate_type_ids_for_specialized_columns
-                .iter(),
-        )
+        .zip(config.gate_type_ids_for_specialized_columns.iter())
         .map(|(evaluator, gate_type_id)| {
-            let placement_strategy = cs
+            let placement_strategy = config
                 .placement_strategies
                 .get(gate_type_id)
                 .copied()
@@ -529,8 +515,7 @@ fn gpu_prove_from_trace<
         })
         .sum();
 
-    let total_num_gate_terms_for_general_purpose_columns: usize = cs
-        .evaluation_data_over_general_purpose_columns
+    let total_num_gate_terms_for_general_purpose_columns: usize = config
         .evaluators_over_general_purpose_columns
         .iter()
         .map(|evaluator| evaluator.total_quotient_terms_over_all_repetitions)
@@ -570,13 +555,13 @@ fn gpu_prove_from_trace<
 
     let mut quotient = ComplexPoly::<LDE>::empty(quotient_degree * domain_size)?;
 
-    let variables_offset = cs.parameters.num_columns_under_copy_permutation;
+    let variables_offset = geometry.parameters.num_columns_under_copy_permutation;
 
     let general_purpose_gates =
-        get_evaluators_of_general_purpose_cols(&cs, &setup_base.selectors_placement);
+        get_evaluators_of_general_purpose_cols(config, &setup_base.selectors_placement);
 
     let specialized_gates =
-        get_specialized_evaluators_from_assembly(&cs, &setup_base.selectors_placement);
+        get_specialized_evaluators_from_assembly(config, &setup_base.selectors_placement);
     let num_cols_per_product = quotient_degree;
     let specialized_cols_challenge_power_offset = total_num_lookup_argument_terms;
     let general_purpose_cols_challenge_power_offset =
@@ -587,7 +572,7 @@ fn gpu_prove_from_trace<
             trace_cache,
             setup_cache,
             arguments_cache,
-            cs.lookup_parameters,
+            geometry.lookup_parameters,
             &setup_base.table_ids_column_idxes,
             &setup_base.selectors_placement,
             &specialized_gates,
@@ -897,7 +882,7 @@ fn gpu_prove_from_trace<
         quotient_holder.num_polys_in_base(),
         domain_size,
         proof_config,
-        cs.lookup_parameters.clone(),
+        geometry.lookup_parameters,
         num_queries,
         query_details_for_cosets.clone(),
         query_idx_and_coset_idx_map,

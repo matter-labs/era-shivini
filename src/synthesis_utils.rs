@@ -8,7 +8,7 @@ use boojum::cs::implementations::proof::Proof;
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::reference_cs::{CSReferenceAssembly, CSReferenceImplementation};
 use boojum::cs::implementations::setup::FinalizationHintsForProver;
-use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::implementations::verifier::{VerificationKey, Verifier};
 use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
@@ -150,28 +150,39 @@ impl CircuitWrapper {
         vk: &VerificationKey<F, DefaultTreeHasher>,
         proof: &ZksyncProof,
     ) -> bool {
-        let verifier = match self {
-            CircuitWrapper::Base(_base_circuit) => {
-                use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
-
-                let verifier_builder =
-                    dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
-                        self.numeric_circuit_type(),
-                    );
-                verifier_builder.create_verifier()
-            }
-            CircuitWrapper::Recursive(recursive_circuit) => {
-                let verifier_builder = recursive_circuit.into_dyn_verifier_builder();
-                verifier_builder.create_verifier()
-            }
-            CircuitWrapper::EIP4844(_) => {
-                EIP4844VerifierBuilder::<F, ZkSyncDefaultRoundFunction>::dyn_verifier_builder()
-                    .create_verifier()
-            }
-        };
-
+        let verifier = self.get_verifier();
         verifier.verify::<DefaultTreeHasher, DefaultTranscript, NoPow>((), vk, proof)
     }
+
+    pub(crate) fn get_verifier(&self) -> Verifier<F, EXT> {
+        match self {
+            CircuitWrapper::Base(inner) => get_verifier_for_base_layer_circuit(inner),
+            CircuitWrapper::Recursive(inner) => get_verifier_for_recursive_layer_circuit(inner),
+            CircuitWrapper::EIP4844(_) => get_verifier_for_eip4844_circuit(),
+        }
+    }
+}
+
+pub(crate) fn get_verifier_for_base_layer_circuit(circuit: &BaseLayerCircuit) -> Verifier<F, EXT> {
+    use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
+    let verifier_builder =
+        dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
+            circuit.numeric_circuit_type(),
+        );
+    verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_recursive_layer_circuit(
+    circuit: &ZkSyncRecursiveLayerCircuit,
+) -> Verifier<F, EXT> {
+    let verifier_builder = circuit.into_dyn_verifier_builder();
+    verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_eip4844_circuit() -> Verifier<F, EXT> {
+    let verifier_builder =
+        EIP4844VerifierBuilder::<F, ZkSyncDefaultRoundFunction>::dyn_verifier_builder();
+    verifier_builder.create_verifier()
 }
 
 #[allow(dead_code)]
