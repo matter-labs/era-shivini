@@ -14,20 +14,15 @@ use boojum::cs::traits::gate::GatePlacementStrategy;
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
 use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 use boojum::field::FieldExtension;
-use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
 use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
 use circuit_definitions::circuit_definitions::recursion_layer::ZkSyncRecursiveLayerCircuit;
-use circuit_definitions::ZkSyncDefaultRoundFunction;
 use std::any::TypeId;
 use std::collections::HashMap;
 
 type F = GoldilocksField;
 type EXT = GoldilocksExt2;
-type BaseLayerCircuit = ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
-type EIP4844Circuit = circuit_definitions::circuit_definitions::eip4844::EIP4844Circuit<
-    F,
-    ZkSyncDefaultRoundFunction,
->;
+type BaseLayerCircuit = ZkSyncBaseLayerCircuit;
+type EIP4844Circuit = circuit_definitions::circuit_definitions::eip4844::EIP4844Circuit;
 
 pub(crate) struct EvaluatorData {
     pub debug_name: String,
