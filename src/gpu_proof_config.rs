@@ -13,16 +13,13 @@ use boojum::cs::traits::gate::GatePlacementStrategy;
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
 use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 use boojum::field::FieldExtension;
-use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
 use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
 use circuit_definitions::circuit_definitions::recursion_layer::ZkSyncRecursiveLayerCircuit;
-use circuit_definitions::ZkSyncDefaultRoundFunction;
 use std::any::TypeId;
 use std::collections::HashMap;
 
 type F = GoldilocksField;
 type EXT = GoldilocksExt2;
-type BaseLayerCircuit = ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
 
 pub(crate) struct EvaluatorData {
     pub debug_name: String,
@@ -147,7 +144,7 @@ impl GpuProofConfig {
         }
     }
 
-    pub fn from_base_layer_circuit(circuit: &BaseLayerCircuit) -> Self {
+    pub fn from_base_layer_circuit(circuit: &ZkSyncBaseLayerCircuit) -> Self {
         Self::from_verifier(&get_verifier_for_base_layer_circuit(circuit))
     }
 

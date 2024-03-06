@@ -795,10 +795,7 @@ mod zksync {
 
     use crate::cs::PACKED_PLACEHOLDER_BITMASK;
     use boojum::cs::implementations::fast_serialization::MemcopySerializable;
-    use circuit_definitions::{
-        aux_definitions::witness_oracle::VmWitnessOracle,
-        circuit_definitions::base_layer::ZkSyncBaseLayerCircuit, ZkSyncDefaultRoundFunction,
-    };
+    use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
     use cudart_sys::CudaError;
 
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
@@ -812,8 +809,7 @@ mod zksync {
     };
 
     #[allow(dead_code)]
-    pub type BaseLayerCircuit =
-        ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
+    pub type BaseLayerCircuit = ZkSyncBaseLayerCircuit;
 
     fn scan_directory<P: AsRef<Path>>(dir: P) -> Vec<PathBuf> {
         let mut file_paths = vec![];

@@ -12,7 +12,6 @@ use boojum::cs::implementations::verifier::{VerificationKey, Verifier};
 use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
-use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
 use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
 use circuit_definitions::circuit_definitions::recursion_layer::ZkSyncRecursiveLayerCircuit;
 #[allow(unused_imports)]
@@ -24,10 +23,9 @@ use circuit_definitions::{
 };
 
 use crate::{DefaultTranscript, DefaultTreeHasher};
+
 type F = GoldilocksField;
 type P = F;
-#[allow(dead_code)]
-type BaseLayerCircuit = ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
 #[allow(dead_code)]
 type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 #[allow(dead_code)]
@@ -35,7 +33,7 @@ type EXT = GoldilocksExt2;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum CircuitWrapper {
-    Base(BaseLayerCircuit),
+    Base(ZkSyncBaseLayerCircuit),
     Recursive(ZkSyncRecursiveLayerCircuit),
 }
 
@@ -70,7 +68,7 @@ impl CircuitWrapper {
     }
 
     #[allow(dead_code)]
-    pub fn into_base_layer(self) -> BaseLayerCircuit {
+    pub fn into_base_layer(self) -> ZkSyncBaseLayerCircuit {
         match self {
             CircuitWrapper::Base(inner) => inner,
             _ => unimplemented!(),
@@ -86,7 +84,7 @@ impl CircuitWrapper {
     }
 
     #[allow(dead_code)]
-    pub fn as_base_layer(&self) -> &BaseLayerCircuit {
+    pub fn as_base_layer(&self) -> &ZkSyncBaseLayerCircuit {
         match self {
             CircuitWrapper::Base(inner) => inner,
             _ => unimplemented!(),
@@ -132,12 +130,11 @@ impl CircuitWrapper {
     }
 }
 
-pub(crate) fn get_verifier_for_base_layer_circuit(circuit: &BaseLayerCircuit) -> Verifier<F, EXT> {
+pub(crate) fn get_verifier_for_base_layer_circuit(
+    circuit: &ZkSyncBaseLayerCircuit,
+) -> Verifier<F, EXT> {
     use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
-    let verifier_builder =
-        dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
-            circuit.numeric_circuit_type(),
-        );
+    let verifier_builder = dyn_verifier_builder_for_circuit_type(circuit.numeric_circuit_type());
     verifier_builder.create_verifier()
 }
 
@@ -173,7 +170,7 @@ pub(crate) fn synth_circuit_for_proving(
 
 // called by zksync-era
 pub fn init_base_layer_cs_for_repeated_proving(
-    circuit: ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>,
+    circuit: ZkSyncBaseLayerCircuit,
     hint: &FinalizationHintsForProver,
 ) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
     init_cs_for_external_proving(CircuitWrapper::Base(circuit), hint)
