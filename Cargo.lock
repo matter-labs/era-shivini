@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "boojum-cuda"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/era-boojum-cuda?branch=main#34f3a51d116ba3ea45d8f47837d2d2c746d005e1"
+source = "git+https://github.com/matter-labs/era-boojum-cuda?branch=main#94a1f0e806c923d246b38b06327c139166cc9580"
 dependencies = [
  "boojum",
  "cmake",
