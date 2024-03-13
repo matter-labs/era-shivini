@@ -8,26 +8,30 @@ use boojum::cs::implementations::proof::Proof;
 use boojum::cs::implementations::prover::ProofConfig;
 use boojum::cs::implementations::reference_cs::{CSReferenceAssembly, CSReferenceImplementation};
 use boojum::cs::implementations::setup::FinalizationHintsForProver;
-use boojum::cs::implementations::verifier::VerificationKey;
+use boojum::cs::implementations::verifier::{VerificationKey, Verifier};
 use boojum::cs::traits::GoodAllocator;
 use boojum::cs::{CSGeometry, GateConfigurationHolder, StaticToolboxHolder};
 use boojum::field::goldilocks::{GoldilocksExt2, GoldilocksField};
-use circuit_definitions::aux_definitions::witness_oracle::VmWitnessOracle;
 use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
 use circuit_definitions::circuit_definitions::recursion_layer::ZkSyncRecursiveLayerCircuit;
+use circuit_definitions::circuit_definitions::verifier_builder::EIP4844VerifierBuilder;
 #[allow(unused_imports)]
 use circuit_definitions::circuit_definitions::{
     ZkSyncUniformCircuitInstance, ZkSyncUniformSynthesisFunction,
 };
 use circuit_definitions::{
-    base_layer_proof_config, recursion_layer_proof_config, ZkSyncDefaultRoundFunction,
+    base_layer_proof_config, eip4844_proof_config, recursion_layer_proof_config,
+    ZkSyncDefaultRoundFunction,
 };
 
 use crate::{DefaultTranscript, DefaultTreeHasher};
+
 type F = GoldilocksField;
 type P = F;
 #[allow(dead_code)]
-type BaseLayerCircuit = ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
+type BaseLayerCircuit = ZkSyncBaseLayerCircuit;
+#[allow(dead_code)]
+type EIP4844Circuit = circuit_definitions::circuit_definitions::eip4844::EIP4844Circuit;
 #[allow(dead_code)]
 type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 #[allow(dead_code)]
@@ -35,8 +39,9 @@ type EXT = GoldilocksExt2;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum CircuitWrapper {
-    Base(ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>),
+    Base(BaseLayerCircuit),
     Recursive(ZkSyncRecursiveLayerCircuit),
+    EIP4844(EIP4844Circuit),
 }
 
 impl CircuitWrapper {
@@ -44,12 +49,14 @@ impl CircuitWrapper {
         match self {
             CircuitWrapper::Base(inner) => inner.geometry(),
             CircuitWrapper::Recursive(inner) => inner.geometry(),
+            CircuitWrapper::EIP4844(inner) => inner.geometry_proxy(),
         }
     }
     pub fn size_hint(&self) -> (Option<usize>, Option<usize>) {
         match self {
             CircuitWrapper::Base(inner) => inner.size_hint(),
             CircuitWrapper::Recursive(inner) => inner.size_hint(),
+            CircuitWrapper::EIP4844(inner) => inner.size_hint(),
         }
     }
 
@@ -58,6 +65,7 @@ impl CircuitWrapper {
         match self {
             CircuitWrapper::Base(inner) => inner.numeric_circuit_type(),
             CircuitWrapper::Recursive(inner) => inner.numeric_circuit_type(),
+            CircuitWrapper::EIP4844(_) => 0,
         }
     }
 
@@ -66,6 +74,7 @@ impl CircuitWrapper {
         match self {
             CircuitWrapper::Base(inner) => inner.short_description(),
             CircuitWrapper::Recursive(inner) => inner.short_description(),
+            CircuitWrapper::EIP4844(_) => "EIP4844",
         }
     }
 
@@ -73,15 +82,23 @@ impl CircuitWrapper {
     pub fn into_base_layer(self) -> BaseLayerCircuit {
         match self {
             CircuitWrapper::Base(inner) => inner,
-            CircuitWrapper::Recursive(_) => unimplemented!(),
+            _ => unimplemented!(),
         }
     }
 
     #[allow(dead_code)]
     pub fn into_recursive_layer(self) -> ZkSyncRecursiveLayerCircuit {
         match self {
-            CircuitWrapper::Base(_) => unimplemented!(),
             CircuitWrapper::Recursive(inner) => inner,
+            _ => unimplemented!(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn into_eip4844(self) -> EIP4844Circuit {
+        match self {
+            CircuitWrapper::EIP4844(inner) => inner,
+            _ => unimplemented!(),
         }
     }
 
@@ -89,24 +106,29 @@ impl CircuitWrapper {
     pub fn as_base_layer(&self) -> &BaseLayerCircuit {
         match self {
             CircuitWrapper::Base(inner) => inner,
-            CircuitWrapper::Recursive(_) => unimplemented!(),
+            _ => unimplemented!(),
         }
     }
 
     #[allow(dead_code)]
     pub fn as_recursive_layer(&self) -> &ZkSyncRecursiveLayerCircuit {
         match self {
-            CircuitWrapper::Base(_) => unimplemented!(),
             CircuitWrapper::Recursive(inner) => inner,
+            _ => unimplemented!(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_eip4844(&self) -> &EIP4844Circuit {
+        match self {
+            CircuitWrapper::EIP4844(inner) => inner,
+            _ => unimplemented!(),
         }
     }
 
     #[allow(dead_code)]
     pub fn is_base_layer(&self) -> bool {
-        match self {
-            CircuitWrapper::Base(_) => true,
-            CircuitWrapper::Recursive(_) => false,
-        }
+        matches!(self, CircuitWrapper::Base(_))
     }
 
     #[allow(dead_code)]
@@ -114,6 +136,7 @@ impl CircuitWrapper {
         match self {
             CircuitWrapper::Base(_) => base_layer_proof_config(),
             CircuitWrapper::Recursive(_) => recursion_layer_proof_config(),
+            CircuitWrapper::EIP4844(_) => eip4844_proof_config(),
         }
     }
 
@@ -123,24 +146,35 @@ impl CircuitWrapper {
         vk: &VerificationKey<F, DefaultTreeHasher>,
         proof: &ZksyncProof,
     ) -> bool {
-        let verifier = match self {
-            CircuitWrapper::Base(_base_circuit) => {
-                use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
-
-                let verifier_builder =
-                    dyn_verifier_builder_for_circuit_type::<F, EXT, ZkSyncDefaultRoundFunction>(
-                        self.numeric_circuit_type(),
-                    );
-                verifier_builder.create_verifier()
-            }
-            CircuitWrapper::Recursive(recursive_circuit) => {
-                let verifier_builder = recursive_circuit.into_dyn_verifier_builder();
-                verifier_builder.create_verifier()
-            }
-        };
-
+        let verifier = self.get_verifier();
         verifier.verify::<DefaultTreeHasher, DefaultTranscript, NoPow>((), vk, proof)
     }
+
+    pub(crate) fn get_verifier(&self) -> Verifier<F, EXT> {
+        match self {
+            CircuitWrapper::Base(inner) => get_verifier_for_base_layer_circuit(inner),
+            CircuitWrapper::Recursive(inner) => get_verifier_for_recursive_layer_circuit(inner),
+            CircuitWrapper::EIP4844(_) => get_verifier_for_eip4844_circuit(),
+        }
+    }
+}
+
+pub(crate) fn get_verifier_for_base_layer_circuit(circuit: &BaseLayerCircuit) -> Verifier<F, EXT> {
+    use circuit_definitions::circuit_definitions::verifier_builder::dyn_verifier_builder_for_circuit_type;
+    let verifier_builder = dyn_verifier_builder_for_circuit_type(circuit.numeric_circuit_type());
+    verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_recursive_layer_circuit(
+    circuit: &ZkSyncRecursiveLayerCircuit,
+) -> Verifier<F, EXT> {
+    let verifier_builder = circuit.into_dyn_verifier_builder();
+    verifier_builder.create_verifier()
+}
+
+pub(crate) fn get_verifier_for_eip4844_circuit() -> Verifier<F, EXT> {
+    let verifier_builder = EIP4844VerifierBuilder::dyn_verifier_builder();
+    verifier_builder.create_verifier()
 }
 
 #[allow(dead_code)]
@@ -168,7 +202,7 @@ pub(crate) fn synth_circuit_for_proving(
 
 // called by zksync-era
 pub fn init_base_layer_cs_for_repeated_proving(
-    circuit: ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>,
+    circuit: ZkSyncBaseLayerCircuit,
     hint: &FinalizationHintsForProver,
 ) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
     init_cs_for_external_proving(CircuitWrapper::Base(circuit), hint)
@@ -180,6 +214,14 @@ pub fn init_recursive_layer_cs_for_repeated_proving(
     hint: &FinalizationHintsForProver,
 ) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
     init_cs_for_external_proving(CircuitWrapper::Recursive(circuit), hint)
+}
+
+// called by zksync-era
+pub fn init_eip4844_cs_for_repeated_proving(
+    circuit: EIP4844Circuit,
+    hint: &FinalizationHintsForProver,
+) -> CSReferenceAssembly<F, F, ProvingCSConfig> {
+    init_cs_for_external_proving(CircuitWrapper::EIP4844(circuit), hint)
 }
 
 pub(crate) fn init_cs_for_external_proving(
@@ -195,7 +237,9 @@ pub(crate) fn init_cs_for_external_proving(
 // in init_or_synthesize_assembly, we expect CFG to be either
 // ProvingCSConfig or SetupCSConfig
 pub trait AllowInitOrSynthesize: CSConfig {}
+
 impl AllowInitOrSynthesize for ProvingCSConfig {}
+
 impl AllowInitOrSynthesize for SetupCSConfig {}
 
 pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_SYNTH: bool>(
@@ -421,5 +465,14 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
                 into_assembly(cs, DO_SYNTH, finalization_hint)
             }
         },
+        CircuitWrapper::EIP4844(inner) => {
+            let builder = inner.configure_builder_proxy(builder);
+            let mut cs = builder.build(builder_arg);
+            inner.add_tables_proxy(&mut cs);
+            if DO_SYNTH {
+                inner.synthesize_proxy(&mut cs);
+            }
+            into_assembly(cs, DO_SYNTH, finalization_hint)
+        }
     }
 }
