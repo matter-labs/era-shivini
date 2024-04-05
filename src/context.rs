@@ -84,11 +84,13 @@ impl ProverContext {
                 aux_events,
                 aux_h2d_buffer,
             });
-            // 10 sets of powers * 2X safety margin
-            set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
-            set_l2_persistence_for_twiddles(get_stream())?;
-            for stream in _aux_streams() {
-                set_l2_persistence_for_twiddles(stream)?;
+            if l2_persist_max != 0 {
+                // 10 sets of powers * 2X safety margin
+                set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
+                set_l2_persistence_for_twiddles(get_stream())?;
+                for stream in _aux_streams() {
+                    set_l2_persistence_for_twiddles(stream)?;
+                }
             }
         };
         Ok(Self {})
