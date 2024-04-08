@@ -121,7 +121,7 @@ impl ProverContext {
         let cuda_ctx = CudaContext::create(12, 12)?;
         // grab small slice then consume everything
         let small_device_alloc = SmallStaticDeviceAllocator::init()?;
-        let device_alloc = StaticDeviceAllocator::init(num_blocks, block_size)?;
+        let device_alloc = StaticDeviceAllocator::init(num_blocks, num_blocks, block_size)?;
         let small_host_alloc = SmallStaticHostAllocator::init()?;
         let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
         Self::create_internal(
