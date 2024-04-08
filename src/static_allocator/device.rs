@@ -10,6 +10,7 @@ use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
 pub const FREE_MEMORY_SLACK: usize = 1 << 23; // 8 MB
+pub const MIN_NUM_BLOCKS: usize = 512;
 pub const SMALL_ALLOCATOR_BLOCKS_COUNT: usize = 1 << 10; // 256 KB
 
 #[derive(Derivative)]
@@ -164,30 +165,44 @@ impl StaticDeviceAllocator {
         self.block_size_in_bytes
     }
 
-    pub fn init(num_blocks: usize, block_size: usize) -> CudaResult<Self> {
-        assert_ne!(num_blocks, 0);
+    pub fn init(
+        max_num_blocks: usize,
+        min_num_blocks: usize,
+        block_size: usize,
+    ) -> CudaResult<Self> {
+        assert_ne!(min_num_blocks, 0);
+        assert!(max_num_blocks >= min_num_blocks);
         assert!(block_size.is_power_of_two());
-        let memory_size = num_blocks * block_size;
-        let memory_size_in_bytes = memory_size * std::mem::size_of::<F>();
-        let block_size_in_bytes = block_size * std::mem::size_of::<F>();
+        let mut num_blocks = max_num_blocks;
+        while num_blocks >= min_num_blocks {
+            let memory_size = num_blocks * block_size;
+            let memory_size_in_bytes = memory_size * std::mem::size_of::<F>();
+            let block_size_in_bytes = block_size * std::mem::size_of::<F>();
 
-        let memory = DeviceAllocation::alloc(memory_size_in_bytes).expect(&format!(
-            "failed to allocate {} bytes",
-            memory_size_in_bytes
-        ));
+            let result = DeviceAllocation::alloc(memory_size_in_bytes);
+            let memory = match result {
+                Ok(memory) => memory,
+                Err(CudaError::ErrorMemoryAllocation) => {
+                    num_blocks -= 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
 
-        println!("allocated {memory_size_in_bytes} bytes on device");
+            println!("allocated {memory_size_in_bytes} bytes on device");
 
-        let alloc = StaticDeviceAllocator {
-            memory: Arc::new(memory),
-            memory_size: memory_size_in_bytes,
-            block_size_in_bytes,
-            bitmap: Arc::new(Mutex::new(Self::init_bitmap(num_blocks))),
-            #[cfg(feature = "allocator_stats")]
-            stats: Default::default(),
-        };
+            let alloc = StaticDeviceAllocator {
+                memory: Arc::new(memory),
+                memory_size: memory_size_in_bytes,
+                block_size_in_bytes,
+                bitmap: Arc::new(Mutex::new(Self::init_bitmap(num_blocks))),
+                #[cfg(feature = "allocator_stats")]
+                stats: Default::default(),
+            };
 
-        Ok(alloc)
+            return Ok(alloc);
+        }
+        Err(CudaError::ErrorMemoryAllocation)
     }
 
     pub fn init_all(block_size: usize) -> CudaResult<Self> {
@@ -196,8 +211,8 @@ impl StaticDeviceAllocator {
         assert!(memory_size_in_bytes >= FREE_MEMORY_SLACK);
         let free_memory_size_in_bytes = memory_size_in_bytes - FREE_MEMORY_SLACK;
         assert!(free_memory_size_in_bytes >= block_size);
-        let num_blocks = free_memory_size_in_bytes / block_size_in_bytes;
-        Self::init(num_blocks, block_size)
+        let max_num_blocks = free_memory_size_in_bytes / block_size_in_bytes;
+        Self::init(max_num_blocks, MIN_NUM_BLOCKS, block_size)
     }
 
     fn find_free_block(&self) -> Option<usize> {
@@ -370,7 +385,11 @@ impl SmallStaticDeviceAllocator {
     pub fn init() -> CudaResult<Self> {
         // cuda requires alignment to be  multiple of 32 goldilocks elems
         const BLOCK_SIZE: usize = 32;
-        let inner = StaticDeviceAllocator::init(SMALL_ALLOCATOR_BLOCKS_COUNT, BLOCK_SIZE)?;
+        let inner = StaticDeviceAllocator::init(
+            SMALL_ALLOCATOR_BLOCKS_COUNT,
+            SMALL_ALLOCATOR_BLOCKS_COUNT,
+            BLOCK_SIZE,
+        )?;
         Ok(Self { inner })
     }
 
