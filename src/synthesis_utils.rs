@@ -383,6 +383,33 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
                 }
                 into_assembly(cs, DO_SYNTH, finalization_hint)
             }
+            ZkSyncBaseLayerCircuit::TransientStorageSorter(inner) => {
+                let builder = inner.configure_builder_proxy(builder);
+                let mut cs = builder.build(builder_arg);
+                inner.add_tables_proxy(&mut cs);
+                if DO_SYNTH {
+                    inner.synthesize_proxy(&mut cs);
+                }
+                into_assembly(cs, DO_SYNTH, finalization_hint)
+            }
+            ZkSyncBaseLayerCircuit::Secp256r1Verify(inner) => {
+                let builder = inner.configure_builder_proxy(builder);
+                let mut cs = builder.build(builder_arg);
+                inner.add_tables_proxy(&mut cs);
+                if DO_SYNTH {
+                    inner.synthesize_proxy(&mut cs);
+                }
+                into_assembly(cs, DO_SYNTH, finalization_hint)
+            }
+            ZkSyncBaseLayerCircuit::EIP4844Repack(inner) => {
+                let builder = inner.configure_builder_proxy(builder);
+                let mut cs = builder.build(builder_arg);
+                inner.add_tables_proxy(&mut cs);
+                if DO_SYNTH {
+                    inner.synthesize_proxy(&mut cs);
+                }
+                into_assembly(cs, DO_SYNTH, finalization_hint)
+            }
         },
         CircuitWrapper::Recursive(recursive_circuit) => match recursive_circuit {
             ZkSyncRecursiveLayerCircuit::SchedulerCircuit(inner) => {
@@ -415,7 +442,19 @@ pub(crate) fn init_or_synthesize_assembly<CFG: AllowInitOrSynthesize, const DO_S
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForStorageApplication(inner)
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForEventsSorter(inner)
             | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesSorter(inner)
-            | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesHasher(inner) => {
+            | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForL1MessagesHasher(inner)
+            | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForTransientStorageSorter(inner)
+            | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForSecp256r1Verify(inner)
+            | ZkSyncRecursiveLayerCircuit::LeafLayerCircuitForEIP4844Repack(inner) => {
+                let builder = inner.configure_builder_proxy(builder);
+                let mut cs = builder.build(builder_arg);
+                inner.add_tables(&mut cs);
+                if DO_SYNTH {
+                    inner.synthesize_into_cs(&mut cs, &round_function);
+                }
+                into_assembly(cs, DO_SYNTH, finalization_hint)
+            }
+            ZkSyncRecursiveLayerCircuit::RecursionTipCircuit(inner) => {
                 let builder = inner.configure_builder_proxy(builder);
                 let mut cs = builder.build(builder_arg);
                 inner.add_tables(&mut cs);
