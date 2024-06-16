@@ -43,6 +43,7 @@ use boojum::field::traits::field_like::PrimeFieldLikeVectorized;
 #[allow(dead_code)]
 pub type DefaultDevCS = CSReferenceAssembly<F, F, DevCSConfig>;
 type P = F;
+use crate::gpu_proof_config::GpuProofConfig;
 use serial_test::serial;
 
 #[serial]
@@ -80,14 +81,14 @@ fn test_proof_comparison_for_poseidon_gate_with_private_witnesses() {
             ProvingCSConfig,
             false,
         >(finalization_hint.as_ref());
+        let config = GpuProofConfig::from_assembly(&reusable_cs);
         let proof = gpu_prove_from_external_witness_data::<
-            _,
             DefaultTranscript,
             DefaultTreeHasher,
             NoPow,
             Global,
         >(
-            &reusable_cs,
+            &config,
             &witness,
             prover_config.clone(),
             &gpu_setup,
@@ -335,7 +336,7 @@ fn test_dry_runs() {
     let witness = proving_cs.witness.unwrap();
     let (reusable_cs, _) =
         init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(finalization_hint.as_ref());
-
+    let config = GpuProofConfig::from_assembly(&reusable_cs);
     let worker = Worker::new();
     let prover_config = init_proof_cfg();
     let (setup_base, _setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
@@ -355,18 +356,21 @@ fn test_dry_runs() {
     .unwrap();
 
     assert!(domain_size.is_power_of_two());
-    let candidates =
-        CacheStrategy::get_strategy_candidates(&reusable_cs, &prover_config, &gpu_setup);
+    let candidates = CacheStrategy::get_strategy_candidates(
+        &config,
+        &prover_config,
+        &gpu_setup,
+        &vk.fixed_parameters,
+    );
     for (_, strategy) in candidates.iter().copied() {
         let proof = || {
             let _ = crate::prover::gpu_prove_from_external_witness_data_with_cache_strategy::<
-                _,
                 DefaultTranscript,
                 DefaultTreeHasher,
                 NoPow,
                 Global,
             >(
-                &reusable_cs,
+                &config,
                 &witness,
                 prover_config.clone(),
                 &gpu_setup,
@@ -439,14 +443,15 @@ fn test_proof_comparison_for_sha256() {
         let (reusable_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(
             finalization_hint.as_ref(),
         );
+        let config = GpuProofConfig::from_assembly(&reusable_cs);
+
         let proof = gpu_prove_from_external_witness_data::<
-            _,
             DefaultTranscript,
             DefaultTreeHasher,
             NoPow,
             Global,
         >(
-            &reusable_cs,
+            &config,
             &witness,
             prover_config.clone(),
             &gpu_setup,
@@ -790,10 +795,7 @@ mod zksync {
 
     use crate::cs::PACKED_PLACEHOLDER_BITMASK;
     use boojum::cs::implementations::fast_serialization::MemcopySerializable;
-    use circuit_definitions::{
-        aux_definitions::witness_oracle::VmWitnessOracle,
-        circuit_definitions::base_layer::ZkSyncBaseLayerCircuit, ZkSyncDefaultRoundFunction,
-    };
+    use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
     use cudart_sys::CudaError;
 
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
@@ -802,13 +804,12 @@ mod zksync {
     const DEFAULT_CIRCUIT_INPUT: &str = "default.circuit";
 
     use crate::synthesis_utils::{
-        init_cs_for_external_proving, init_or_synthesize_assembly, synth_circuit_for_proving,
-        synth_circuit_for_setup, CircuitWrapper,
+        init_or_synthesize_assembly, synth_circuit_for_proving, synth_circuit_for_setup,
+        CircuitWrapper,
     };
 
     #[allow(dead_code)]
-    pub type BaseLayerCircuit =
-        ZkSyncBaseLayerCircuit<F, VmWitnessOracle<F>, ZkSyncDefaultRoundFunction>;
+    pub type BaseLayerCircuit = ZkSyncBaseLayerCircuit;
 
     fn scan_directory<P: AsRef<Path>>(dir: P) -> Vec<PathBuf> {
         let mut file_paths = vec![];
@@ -926,7 +927,7 @@ mod zksync {
         let worker = &Worker::new();
         let _ctx = ProverContext::create().expect("gpu prover context");
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "tip"] {
             let data_dir = format!("./test_data/{}", main_dir);
             dbg!(&data_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
@@ -978,16 +979,14 @@ mod zksync {
                 let gpu_proof = {
                     let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
                     let witness = proving_cs.witness.unwrap();
-                    let reusable_cs =
-                        init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+                    let config = GpuProofConfig::from_circuit_wrapper(&circuit);
                     let proof = gpu_prove_from_external_witness_data::<
-                        _,
                         DefaultTranscript,
                         DefaultTreeHasher,
                         NoPow,
                         Global,
                     >(
-                        &reusable_cs,
+                        &config,
                         &witness,
                         proof_config.clone(),
                         &gpu_setup,
@@ -1019,7 +1018,7 @@ mod zksync {
     fn generate_reference_proofs_for_all_zksync_circuits() {
         let worker = &Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "tip"] {
             let data_dir = format!("./test_data/{}", main_dir);
             dbg!(&data_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
@@ -1128,15 +1127,14 @@ mod zksync {
         println!("gpu proving");
         let gpu_proof = {
             let witness = proving_cs.witness.as_ref().unwrap();
-            let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+            let config = GpuProofConfig::from_circuit_wrapper(&circuit);
             gpu_prove_from_external_witness_data::<
-                _,
                 DefaultTranscript,
                 DefaultTreeHasher,
                 NoPow,
                 Global,
             >(
-                &reusable_cs,
+                &config,
                 &witness,
                 proof_cfg.clone(),
                 &gpu_setup,
@@ -1191,7 +1189,7 @@ mod zksync {
         );
         let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
         let witness = proving_cs.witness.unwrap();
-        let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+        let config = GpuProofConfig::from_circuit_wrapper(&circuit);
         let gpu_setup = {
             let _ctx = ProverContext::create().expect("gpu prover context");
             GpuSetup::<Global>::from_setup_and_hints(
@@ -1205,13 +1203,12 @@ mod zksync {
         };
         let proof_fn = || {
             let _ = gpu_prove_from_external_witness_data::<
-                _,
                 DefaultTranscript,
                 DefaultTreeHasher,
                 NoPow,
                 Global,
             >(
-                &reusable_cs,
+                &config,
                 &witness,
                 proof_cfg.clone(),
                 &gpu_setup,
@@ -1230,8 +1227,8 @@ mod zksync {
                 // but nice for peace of mind
                 _setup_cache_reset();
                 let strategy =
-                    CacheStrategy::get::<_, DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
-                        &reusable_cs,
+                    CacheStrategy::get::<DefaultTranscript, DefaultTreeHasher, NoPow, Global>(
+                        &config,
                         &witness,
                         proof_cfg.clone(),
                         &gpu_setup,
@@ -1290,6 +1287,7 @@ mod zksync {
         let (reusable_cs, _) = init_or_synth_cs_for_sha256::<ProvingCSConfig, Global, false>(
             finalization_hint.as_ref(),
         );
+        let config = GpuProofConfig::from_assembly(&reusable_cs);
         let mut gpu_setup = GpuSetup::<Global>::from_setup_and_hints(
             setup_base.clone(),
             clone_reference_tree(&setup_tree),
@@ -1301,13 +1299,12 @@ mod zksync {
         witness.public_inputs_locations = vec![(0, 0)];
         gpu_setup.variables_hint[0][0] = PACKED_PLACEHOLDER_BITMASK;
         let _ = gpu_prove_from_external_witness_data::<
-            _,
             DefaultTranscript,
             DefaultTreeHasher,
             NoPow,
             Global,
         >(
-            &reusable_cs,
+            &config,
             &witness,
             proof_config.clone(),
             &gpu_setup,
@@ -1374,7 +1371,7 @@ mod zksync {
     fn test_generate_reference_setups_for_all_zksync_circuits() {
         let _worker = Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "tip"] {
             let data_dir = format!("./test_data/{}", main_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
 
@@ -1412,7 +1409,7 @@ mod zksync {
         let _ctx = ProverContext::create().expect("gpu context");
         let worker = &Worker::new();
 
-        for main_dir in ["base", "leaf", "node"] {
+        for main_dir in ["base", "leaf", "node", "tip"] {
             let data_dir = format!("{}/{}", TEST_DATA_ROOT_DIR, main_dir);
             let circuits = scan_directory_for_circuits(&data_dir);
 

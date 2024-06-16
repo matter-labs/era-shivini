@@ -84,11 +84,13 @@ impl ProverContext {
                 aux_events,
                 aux_h2d_buffer,
             });
-            // 10 sets of powers * 2X safety margin
-            set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
-            set_l2_persistence_for_twiddles(get_stream())?;
-            for stream in _aux_streams() {
-                set_l2_persistence_for_twiddles(stream)?;
+            if l2_persist_max != 0 {
+                // 10 sets of powers * 2X safety margin
+                set_l2_persistence_carveout(2 * 10 * 8 * (1 << 12))?;
+                set_l2_persistence_for_twiddles(get_stream())?;
+                for stream in _aux_streams() {
+                    set_l2_persistence_for_twiddles(stream)?;
+                }
             }
         };
         Ok(Self {})
@@ -119,7 +121,7 @@ impl ProverContext {
         let cuda_ctx = CudaContext::create(12, 12)?;
         // grab small slice then consume everything
         let small_device_alloc = SmallStaticDeviceAllocator::init()?;
-        let device_alloc = StaticDeviceAllocator::init(num_blocks, block_size)?;
+        let device_alloc = StaticDeviceAllocator::init(num_blocks, num_blocks, block_size)?;
         let small_host_alloc = SmallStaticHostAllocator::init()?;
         let host_alloc = StaticHostAllocator::init(1 << 8, block_size)?;
         Self::create_internal(

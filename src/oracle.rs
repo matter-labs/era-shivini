@@ -90,6 +90,7 @@ pub struct SubTree {
     pub nodes: Rc<DVec<F>>,
     pub num_leafs: usize,
     pub cap_size: usize,
+    #[allow(dead_code)]
     pub tree_idx: usize,
 }
 

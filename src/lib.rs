@@ -4,7 +4,6 @@
 #![feature(iter_array_chunks)]
 #![feature(get_mut_unchecked)]
 #![feature(generic_const_exprs)]
-#![feature(return_position_impl_trait_in_trait)]
 mod context;
 #[cfg(test)]
 mod test;
@@ -42,6 +41,7 @@ use copy_permutation::*;
 use data_structures::*;
 use lookup::*;
 use poly::*;
+pub mod gpu_proof_config;
 mod prover;
 mod quotient;
 #[cfg(feature = "zksync")]
