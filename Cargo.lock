@@ -262,7 +262,7 @@ checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 [[package]]
 name = "boojum"
 version = "0.2.0"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#30300f043c9afaeeb35d0f7bd3cc0acaf69ccde4"
+source = "git+https://github.com/matter-labs/era-boojum?branch=main#4bcb11f0610302110ae8109af01d5b652191b2f6"
 dependencies = [
  "arrayvec 0.7.4",
  "bincode",
@@ -279,7 +279,6 @@ dependencies = [
  "lazy_static",
  "num-modular",
  "num_cpus",
- "packed_simd",
  "pairing_ce 0.28.5 (git+https://github.com/matter-labs/pairing.git)",
  "rand 0.8.5",
  "rayon",
@@ -351,7 +350,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "circuit_definitions"
 version = "1.5.0"
-source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#6255bf32164eae9d13b0a655b9c4fbbaf6563c1b"
+source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#5d6a06c37f4656d26a4170d22f2298cd7716c070"
 dependencies = [
  "circuit_encodings",
  "crossbeam 0.8.4",
@@ -359,14 +358,12 @@ dependencies = [
  "seq-macro",
  "serde",
  "snark_wrapper",
- "zk_evm",
- "zkevm_circuits",
 ]
 
 [[package]]
 name = "circuit_encodings"
 version = "0.1.50"
-source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#6255bf32164eae9d13b0a655b9c4fbbaf6563c1b"
+source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#5d6a06c37f4656d26a4170d22f2298cd7716c070"
 dependencies = [
  "derivative",
  "serde",
@@ -613,7 +610,7 @@ dependencies = [
 [[package]]
 name = "cs_derive"
 version = "0.1.0"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#30300f043c9afaeeb35d0f7bd3cc0acaf69ccde4"
+source = "git+https://github.com/matter-labs/era-boojum?branch=main#4bcb11f0610302110ae8109af01d5b652191b2f6"
 dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.79",
@@ -1172,12 +1169,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libm"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1348,7 +1339,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da0df0e5185db44f69b44f26786fe401b6c293d1907744beaa7fa62b2e5a517a"
 dependencies = [
  "autocfg",
- "libm",
 ]
 
 [[package]]
@@ -1404,16 +1394,6 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "sha2 0.10.8",
-]
-
-[[package]]
-name = "packed_simd"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f9f08af0c877571712e2e3e686ad79efad9657dbf0f7c3c8ba943ff6c38932d"
-dependencies = [
- "cfg-if 1.0.0",
- "num-traits",
 ]
 
 [[package]]
@@ -2425,7 +2405,7 @@ checksum = "525b4ec142c6b68a2d10f01f7bbf6755599ca3f81ea53b8431b7dd348f5fdb2d"
 [[package]]
 name = "zk_evm"
 version = "1.5.0"
-source = "git+https://github.com/matter-labs/era-zk_evm.git?branch=v1.5.0#06deb82ef51666b21ac5ebb543366906db04916b"
+source = "git+https://github.com/matter-labs/era-zk_evm.git?branch=v1.5.0#0c5cdca00cca4fa0a8c49147a11048c24f8a4b12"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2451,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "zkevm_circuits"
 version = "1.5.0"
-source = "git+https://github.com/matter-labs/era-zkevm_circuits.git?branch=v1.5.0#b2d0db2f08de3037aebcaa8b394981e57158bdbe"
+source = "git+https://github.com/matter-labs/era-zkevm_circuits.git?branch=v1.5.0#b7a86c739e8a8f88e788e90893c6e7496f6d7dfc"
 dependencies = [
  "arrayvec 0.7.4",
  "boojum",
@@ -2470,7 +2450,7 @@ dependencies = [
 [[package]]
 name = "zkevm_opcode_defs"
 version = "1.5.0"
-source = "git+https://github.com/matter-labs/era-zkevm_opcode_defs.git?branch=v1.5.0#109d9f734804a8b9dc0531c0b576e2a0f55a40de"
+source = "git+https://github.com/matter-labs/era-zkevm_opcode_defs.git?branch=v1.5.0#28d2edabf902ea9b08f6a26a4506831fd89346b9"
 dependencies = [
  "bitflags 2.5.0",
  "blake2 0.10.6",
