@@ -804,8 +804,8 @@ mod zksync {
     const DEFAULT_CIRCUIT_INPUT: &str = "default.circuit";
 
     use crate::synthesis_utils::{
-        init_or_synthesize_assembly, synth_circuit_for_proving, synth_circuit_for_setup,
-        CircuitWrapper,
+        init_cs_for_external_proving, init_or_synthesize_assembly, synth_circuit_for_proving,
+        synth_circuit_for_setup, CircuitWrapper,
     };
 
     #[allow(dead_code)]
@@ -1262,6 +1262,84 @@ mod zksync {
                 drop(ctx);
             }
         }
+    }
+
+    #[serial]
+    #[test]
+    #[ignore]
+    fn profile_single_circuit() {
+        let circuit = get_circuit_from_env();
+        println!(
+            "{} {}",
+            circuit.numeric_circuit_type(),
+            circuit.short_description()
+        );
+        let worker = &Worker::new();
+        let (setup_cs, finalization_hint) = synth_circuit_for_setup(circuit.clone());
+        let proof_cfg = circuit.proof_config();
+        let (setup_base, _setup, vk, setup_tree, vars_hint, wits_hint) = setup_cs.get_full_setup(
+            worker,
+            proof_cfg.fri_lde_factor,
+            proof_cfg.merkle_tree_cap_size,
+        );
+        let proving_cs = synth_circuit_for_proving(circuit.clone(), &finalization_hint);
+        let witness = proving_cs.witness.unwrap();
+        let reusable_cs = init_cs_for_external_proving(circuit.clone(), &finalization_hint);
+        let config = GpuProofConfig::from_assembly(&reusable_cs);
+        let gpu_setup = {
+            let _ctx = ProverContext::create().expect("gpu prover context");
+            GpuSetup::<Global>::from_setup_and_hints(
+                setup_base.clone(),
+                clone_reference_tree(&setup_tree),
+                vars_hint.clone(),
+                wits_hint.clone(),
+                &worker,
+            )
+            .expect("gpu setup")
+        };
+        let proof_fn = || {
+            let _ = gpu_prove_from_external_witness_data::<
+                DefaultTranscript,
+                DefaultTreeHasher,
+                NoPow,
+                Global,
+            >(
+                &config,
+                &witness,
+                proof_cfg.clone(),
+                &gpu_setup,
+                &vk,
+                (),
+                worker,
+            )
+            .expect("gpu proof");
+        };
+        let ctx = ProverContext::create().expect("gpu prover context");
+        println!("warmup");
+        proof_fn();
+        _setup_cache_reset();
+        nvtx::range_push!("test");
+        nvtx::range_push!("first run");
+        println!("first run");
+        let start = std::time::Instant::now();
+        proof_fn();
+        println!("◆ total: {:?}", start.elapsed());
+        nvtx::range_pop!();
+        nvtx::range_push!("second run");
+        println!("second run");
+        let start = std::time::Instant::now();
+        proof_fn();
+        println!("◆ total: {:?}", start.elapsed());
+        nvtx::range_pop!();
+        nvtx::range_push!("third run");
+        println!("third run");
+        let start = std::time::Instant::now();
+        proof_fn();
+        println!("◆ total: {:?}", start.elapsed());
+        nvtx::range_pop!();
+        nvtx::range_pop!();
+        drop(ctx);
+        return;
     }
 
     #[serial]
