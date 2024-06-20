@@ -25,7 +25,7 @@ struct ProverContextSingleton {
     strategy_cache: HashMap<Vec<[F; 4]>, CacheStrategy>,
     l2_cache_size: usize,
     l2_persist_max: usize,
-    compute_capability_major: u32,
+    compute_capability: (u32, u32),
     aux_streams: [CudaStream; NUM_AUX_STREAMS_AND_EVENTS],
     aux_events: [CudaEvent; NUM_AUX_STREAMS_AND_EVENTS],
     aux_h2d_buffer: HostAllocation<u8>,
@@ -54,6 +54,9 @@ impl ProverContext {
                 device_get_attribute(CudaDeviceAttr::MaxPersistingL2CacheSize, device_id)? as usize;
             let compute_capability_major =
                 device_get_attribute(CudaDeviceAttr::ComputeCapabilityMajor, device_id)? as u32;
+            let compute_capability_minor =
+                device_get_attribute(CudaDeviceAttr::ComputeCapabilityMinor, device_id)? as u32;
+            let compute_capability = (compute_capability_major, compute_capability_minor);
             let aux_streams = (0..NUM_AUX_STREAMS_AND_EVENTS)
                 .map(|_| CudaStream::create_with_flags(CudaStreamCreateFlags::NON_BLOCKING))
                 .collect::<CudaResult<Vec<_>>>()?
@@ -79,7 +82,7 @@ impl ProverContext {
                 strategy_cache: HashMap::new(),
                 l2_cache_size,
                 l2_persist_max,
-                compute_capability_major,
+                compute_capability,
                 aux_streams,
                 aux_events,
                 aux_h2d_buffer,
@@ -292,8 +295,8 @@ pub(crate) fn _l2_cache_size() -> usize {
     get_context().l2_cache_size
 }
 
-pub(crate) fn _compute_capability_major() -> u32 {
-    get_context().compute_capability_major
+pub(crate) fn _compute_capability() -> (u32, u32) {
+    get_context().compute_capability
 }
 
 pub(crate) fn _aux_streams() -> &'static [CudaStream; NUM_AUX_STREAMS_AND_EVENTS] {
