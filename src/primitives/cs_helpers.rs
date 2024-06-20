@@ -48,7 +48,7 @@ pub fn constraint_evaluation(
     assert!(STREAMS_COUNT <= NUM_AUX_STREAMS_AND_EVENTS);
     const BLOCK_SIZE: usize = 128;
     let l2_size = _l2_cache_size();
-    let capability = _compute_capability_major();
+    let (cc_major, cc_minor) = _compute_capability();
     let cols_count =
         (variables_slice.len() + witnesses_slice.len() + constants_slice.len()) / domain_size + 2;
     let chunk_rows =
@@ -58,7 +58,7 @@ pub fn constraint_evaluation(
     } else {
         (domain_size + chunk_rows - 1) / chunk_rows
     };
-    if is_specialized || split == 1 || capability < 8 {
+    if is_specialized || split == 1 || cc_major < 8 || (cc_major == 8 && cc_minor == 6) {
         let variable_columns_matrix = DeviceMatrix::new(variables_slice, domain_size);
         let witness_columns_matrix = DeviceMatrix::new(witnesses_slice, domain_size);
         let constant_columns_matrix = DeviceMatrix::new(constants_slice, domain_size);
