@@ -347,9 +347,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "circuit_definitions"
-version = "0.150.0"
+version = "0.150.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0386d9218f77e2e8b9430e642192ef7f6bf1cbad4f999f70e3c546857d858a"
+checksum = "38fac8ca08a18d51568d4dd0a8fc51b9c17625020eaf808cacbcdd03be8445c3"
 dependencies = [
  "circuit_encodings",
  "crossbeam 0.8.4",
@@ -1978,7 +1978,7 @@ dependencies = [
 
 [[package]]
 name = "shivini"
-version = "0.150.0"
+version = "0.150.1"
 dependencies = [
  "bincode",
  "blake2 0.10.6",
