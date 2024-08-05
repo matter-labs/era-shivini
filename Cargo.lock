@@ -236,37 +236,7 @@ dependencies = [
  "convert_case",
  "crossbeam 0.8.4",
  "crypto-bigint",
- "cs_derive 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "derivative",
- "ethereum-types",
- "firestorm",
- "itertools 0.10.5",
- "lazy_static",
- "num-modular",
- "num_cpus",
- "pairing_ce",
- "rand 0.8.5",
- "rayon",
- "serde",
- "sha2 0.10.8",
- "sha3_ce",
- "smallvec",
- "unroll",
-]
-
-[[package]]
-name = "boojum"
-version = "0.2.1"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#eb51b6b711261ffe1d75d71cd5dfa103f70648be"
-dependencies = [
- "arrayvec 0.7.4",
- "bincode",
- "blake2 0.10.6",
- "const_format",
- "convert_case",
- "crossbeam 0.8.4",
- "crypto-bigint",
- "cs_derive 0.2.1 (git+https://github.com/matter-labs/era-boojum?branch=main)",
+ "cs_derive",
  "derivative",
  "ethereum-types",
  "firestorm",
@@ -323,7 +293,8 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "circuit_definitions"
 version = "0.150.2-rc.2"
-source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#ea359dc6ee561f822462845a722a4388e3efcd45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f98221101f42cceafa9baf8ec320ef78aa02bf7c2be5c398bf90e7acf1709bfa"
 dependencies = [
  "circuit_encodings",
  "crossbeam 0.8.4",
@@ -336,7 +307,8 @@ dependencies = [
 [[package]]
 name = "circuit_encodings"
 version = "0.150.2-rc.2"
-source = "git+https://github.com/matter-labs/era-zkevm_test_harness?branch=v1.5.0#ea359dc6ee561f822462845a722a4388e3efcd45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e59747066b9a0d1a15d45f5837658aec5d53744fb643954f9dcc412f76c0d346"
 dependencies = [
  "derivative",
  "serde",
@@ -582,17 +554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cs_derive"
-version = "0.2.1"
-source = "git+https://github.com/matter-labs/era-boojum?branch=main#eb51b6b711261ffe1d75d71cd5dfa103f70648be"
-dependencies = [
- "proc-macro-error",
- "proc-macro2 1.0.86",
- "quote 1.0.36",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -686,7 +647,7 @@ name = "era_boojum_cuda"
 version = "0.2.0"
 source = "git+https://github.com/matter-labs/era-boojum-cuda?branch=rr-build-refactor#abab58e7246c1edd605c1867f96e57ecd79f6db7"
 dependencies = [
- "boojum 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "boojum",
  "cmake",
  "era_cudart",
  "era_cudart_sys",
@@ -807,7 +768,7 @@ dependencies = [
  "blake2 0.9.2",
  "blake2-rfc_bellman_edition",
  "blake2s_simd",
- "boojum 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "boojum",
  "byteorder",
  "derivative",
  "digest 0.9.0",
@@ -1848,7 +1809,7 @@ version = "0.2.0"
 dependencies = [
  "bincode",
  "blake2 0.10.6",
- "boojum 0.2.1 (git+https://github.com/matter-labs/era-boojum?branch=main)",
+ "boojum",
  "circuit_definitions",
  "derivative",
  "era_boojum_cuda",
@@ -2251,8 +2212,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a85c1987a1e7e89f1f8c39ca19bffb61521e719050086372aaea8817f403fc"
 dependencies = [
  "arrayvec 0.7.4",
- "boojum 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "cs_derive 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "boojum",
+ "cs_derive",
  "derivative",
  "hex",
  "itertools 0.10.5",

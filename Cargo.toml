@@ -6,11 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-boojum = { git = "https://github.com/matter-labs/era-boojum", branch = "main" }
+boojum = "=0.2.1"
 boojum-cuda = { git = "https://github.com/matter-labs/era-boojum-cuda", branch = "rr-build-refactor", package = "era_boojum_cuda" }
 cudart = { git = "https://github.com/matter-labs/era-cuda", branch = "rr-build-refactor", package = "era_cudart" }
 cudart-sys = { git = "https://github.com/matter-labs/era-cuda", branch = "rr-build-refactor", package = "era_cudart_sys" }
-circuit_definitions = { git = "https://github.com/matter-labs/era-zkevm_test_harness", branch = "v1.5.0", package = "circuit_definitions", optional = true }
+circuit_definitions = { version = "=0.150.2-rc.2", package = "circuit_definitions", optional = true }
 
 rand = "0.8"
 smallvec = { version = "1.13", features = [
