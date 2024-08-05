@@ -1318,25 +1318,33 @@ mod zksync {
         println!("warmup");
         proof_fn();
         _setup_cache_reset();
+        #[cfg(feature = "nvtx")]
         nvtx::range_push!("test");
+        #[cfg(feature = "nvtx")]
         nvtx::range_push!("first run");
         println!("first run");
         let start = std::time::Instant::now();
         proof_fn();
         println!("◆ total: {:?}", start.elapsed());
+        #[cfg(feature = "nvtx")]
         nvtx::range_pop!();
+        #[cfg(feature = "nvtx")]
         nvtx::range_push!("second run");
         println!("second run");
         let start = std::time::Instant::now();
         proof_fn();
         println!("◆ total: {:?}", start.elapsed());
+        #[cfg(feature = "nvtx")]
         nvtx::range_pop!();
+        #[cfg(feature = "nvtx")]
         nvtx::range_push!("third run");
         println!("third run");
         let start = std::time::Instant::now();
         proof_fn();
         println!("◆ total: {:?}", start.elapsed());
+        #[cfg(feature = "nvtx")]
         nvtx::range_pop!();
+        #[cfg(feature = "nvtx")]
         nvtx::range_pop!();
         drop(ctx);
         return;

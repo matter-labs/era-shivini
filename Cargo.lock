@@ -645,7 +645,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 [[package]]
 name = "era_boojum_cuda"
 version = "0.2.0"
-source = "git+https://github.com/matter-labs/era-boojum-cuda?branch=rr-build-refactor#abab58e7246c1edd605c1867f96e57ecd79f6db7"
+source = "git+https://github.com/matter-labs/era-boojum-cuda?branch=rr-build-refactor#ac672249dcd0a561026fbea6f922162b336e9907"
 dependencies = [
  "boojum",
  "cmake",
@@ -658,7 +658,7 @@ dependencies = [
 [[package]]
 name = "era_cudart"
 version = "0.2.0"
-source = "git+https://github.com/matter-labs/era-cuda?branch=rr-build-refactor#70cb1fe932a82e0b69196fd446c245b48617485e"
+source = "git+https://github.com/matter-labs/era-cuda?branch=rr-build-refactor#00e5f0ef02b4d6aa4e29828c7fb149bc0af58601"
 dependencies = [
  "bitflags",
  "era_cudart_sys",
@@ -668,7 +668,7 @@ dependencies = [
 [[package]]
 name = "era_cudart_sys"
 version = "0.2.0"
-source = "git+https://github.com/matter-labs/era-cuda?branch=rr-build-refactor#70cb1fe932a82e0b69196fd446c245b48617485e"
+source = "git+https://github.com/matter-labs/era-cuda?branch=rr-build-refactor#00e5f0ef02b4d6aa4e29828c7fb149bc0af58601"
 dependencies = [
  "serde_json",
 ]
