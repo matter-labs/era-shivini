@@ -3,7 +3,7 @@ use boojum_cuda::{
     ops_cub::device_scan::get_scan_temp_storage_bytes,
     ops_simple::{set_by_ref, set_by_val, set_to_zero, SetByRef, SetByVal},
 };
-use cudart::slice::DeviceVariable;
+use era_cudart::slice::DeviceVariable;
 
 use super::*;
 
@@ -149,7 +149,7 @@ pub fn rotate_left(values: &mut [F]) -> CudaResult<()> {
 
 #[allow(dead_code)]
 pub fn set_zero_static(buffer: &mut [u8]) -> CudaResult<()> {
-    use cudart::memory::memory_set;
+    use era_cudart::memory::memory_set;
     let buffer = unsafe { DeviceSlice::from_mut_slice(buffer) };
     if_not_dry_run! {
         memory_set(buffer, 0)

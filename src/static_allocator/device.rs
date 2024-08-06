@@ -1,11 +1,11 @@
-use cudart::memory::{memory_get_info, DeviceAllocation};
+use era_cudart::memory::{memory_get_info, DeviceAllocation};
 
 use super::*;
 use derivative::*;
 use std::alloc::{Allocator, Layout};
 use std::ops::Deref;
 
-use cudart_sys::CudaError;
+use era_cudart_sys::CudaError;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
@@ -158,7 +158,7 @@ impl StaticDeviceAllocator {
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        cudart::slice::CudaSlice::as_ptr(self.memory.deref())
+        era_cudart::slice::CudaSlice::as_ptr(self.memory.deref())
     }
 
     pub fn block_size_in_bytes(&self) -> usize {

@@ -5,7 +5,7 @@ use boojum_cuda::{
     device_structures::{DeviceMatrix, DeviceMatrixMut},
     extension_field::VectorizedExtensionField,
 };
-use cudart::stream::CudaStreamWaitEventFlags;
+use era_cudart::stream::CudaStreamWaitEventFlags;
 use std::mem::size_of;
 
 #[allow(dead_code)]

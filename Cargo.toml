@@ -2,15 +2,23 @@
 name = "shivini"
 version = "0.2.0"
 edition = "2021"
+authors = ["The Matter Labs Team <hello@matterlabs.dev>"]
+homepage = "https://zksync.io/"
+repository = "https://github.com/matter-labs/era-shivini"
+license = "MIT OR Apache-2.0"
+keywords = ["blockchain", "zksync"]
+categories = ["cryptography"]
+description = "Shvini is a library implementing a GPU-accelerated zkSync prover"
+exclude = ["/test_data"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-boojum = "=0.2.1"
-boojum-cuda = { git = "https://github.com/matter-labs/era-boojum-cuda", branch = "rr-build-refactor", package = "era_boojum_cuda" }
-cudart = { git = "https://github.com/matter-labs/era-cuda", branch = "rr-build-refactor", package = "era_cudart" }
-cudart-sys = { git = "https://github.com/matter-labs/era-cuda", branch = "rr-build-refactor", package = "era_cudart_sys" }
-circuit_definitions = { version = "=0.150.2-rc.2", package = "circuit_definitions", optional = true }
+boojum = "=0.2.2"
+boojum-cuda = "=0.2.0"
+era_cudart = "=0.2.0"
+era_cudart_sys = "=0.2.0"
+circuit_definitions = { version = "=0.150.2-rc.3", package = "circuit_definitions", optional = true }
 
 rand = "0.8"
 smallvec = { version = "1.13", features = [

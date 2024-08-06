@@ -796,7 +796,7 @@ mod zksync {
     use crate::cs::PACKED_PLACEHOLDER_BITMASK;
     use boojum::cs::implementations::fast_serialization::MemcopySerializable;
     use circuit_definitions::circuit_definitions::base_layer::ZkSyncBaseLayerCircuit;
-    use cudart_sys::CudaError;
+    use era_cudart_sys::CudaError;
 
     pub type ZksyncProof = Proof<F, DefaultTreeHasher, GoldilocksExt2>;
 

@@ -5,7 +5,7 @@ use boojum_cuda::extension_field::VectorizedExtensionField;
 // arithmetic operations
 use boojum_cuda::ops_cub::device_scan::*;
 use boojum_cuda::ops_simple::*;
-use cudart::slice::DeviceVariable;
+use era_cudart::slice::DeviceVariable;
 
 pub fn add_assign(this: &mut [F], other: &[F]) -> CudaResult<()> {
     assert_eq!(this.len(), other.len());

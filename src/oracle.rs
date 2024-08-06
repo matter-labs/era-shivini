@@ -303,7 +303,7 @@ pub fn batch_query_tree<H: TreeHasher<F, Output = [F; 4]>, A: GoodAllocator>(
     num_elems_per_leaf: usize,
     h_all_proofs: &mut Vec<F, A>,
 ) -> CudaResult<()> {
-    use cudart::slice::DeviceSlice;
+    use era_cudart::slice::DeviceSlice;
     assert_eq!(d_indexes.len(), num_queries);
     assert!(domain_size.is_power_of_two());
     assert!(cap_size.is_power_of_two());
@@ -346,7 +346,7 @@ pub fn batch_query_leaf_sources<A: GoodAllocator>(
     h_all_leaf_elems: &mut Vec<F, A>,
 ) -> CudaResult<()> {
     use boojum_cuda::device_structures::{DeviceMatrix, DeviceMatrixMut};
-    use cudart::slice::DeviceSlice;
+    use era_cudart::slice::DeviceSlice;
     assert_eq!(d_indexes.len(), num_queries);
     assert!(domain_size.is_power_of_two());
     assert_eq!(domain_size, d_leaf_sources.domain_size());

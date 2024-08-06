@@ -3,7 +3,7 @@ use boojum::{
     field::U64Representable,
     worker::Worker,
 };
-use cudart::slice::CudaSlice;
+use era_cudart::slice::CudaSlice;
 use std::ops::Range;
 
 use super::*;

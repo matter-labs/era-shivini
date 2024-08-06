@@ -5,7 +5,7 @@ use boojum::cs::implementations::verifier::{VerificationKey, VerificationKeyCirc
 use boojum::cs::implementations::witness::WitnessVec;
 use boojum::cs::oracle::TreeHasher;
 use boojum::worker::Worker;
-use cudart_sys::CudaError::ErrorMemoryAllocation;
+use era_cudart_sys::CudaError::ErrorMemoryAllocation;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::rc::Rc;
