@@ -47,13 +47,13 @@ jobs:
       - name: setup rust
         run: |
           rustup set profile minimal
-          rustup toolchain install nightly-2024-05-07
-          rustup default nightly-2024-05-07
+          rustup toolchain install nightly-2024-08-01
+          rustup default nightly-2024-08-01
 
       - name: build
         run: |
-          cargo +nightly-2024-05-07 build --release
+          cargo +nightly-2024-08-01 build --release
 
       - name: test
         run: |
-          cargo +nightly-2024-05-07 test --release
+          cargo +nightly-2024-08-01 test --release
