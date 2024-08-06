@@ -12,7 +12,7 @@ use boojum::{
     worker::Worker,
 };
 use boojum_cuda::ops_complex::pack_variable_indexes;
-use cudart::slice::{CudaSlice, DeviceSlice};
+use era_cudart::slice::{CudaSlice, DeviceSlice};
 
 use super::*;
 pub(crate) const PACKED_PLACEHOLDER_BITMASK: u32 = 1 << 31;

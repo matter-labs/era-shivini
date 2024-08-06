@@ -1,7 +1,7 @@
 use super::*;
 
 use boojum_cuda::ops_complex::select;
-use cudart::slice::DeviceSlice;
+use era_cudart::slice::DeviceSlice;
 
 pub fn variable_assignment(
     d_variable_indexes: &DVec<u32>,

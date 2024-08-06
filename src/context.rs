@@ -1,11 +1,11 @@
 use super::*;
 use boojum_cuda::context::Context;
-use cudart::device::{device_get_attribute, get_device};
-use cudart::event::{CudaEvent, CudaEventCreateFlags};
-use cudart::memory::{CudaHostAllocFlags, HostAllocation};
-use cudart::slice::DeviceSlice;
-use cudart::stream::CudaStreamCreateFlags;
-use cudart_sys::CudaDeviceAttr;
+use era_cudart::device::{device_get_attribute, get_device};
+use era_cudart::event::{CudaEvent, CudaEventCreateFlags};
+use era_cudart::memory::{CudaHostAllocFlags, HostAllocation};
+use era_cudart::slice::DeviceSlice;
+use era_cudart::stream::CudaStreamCreateFlags;
+use era_cudart_sys::CudaDeviceAttr;
 use std::collections::HashMap;
 
 pub(crate) const NUM_AUX_STREAMS_AND_EVENTS: usize = 4;
@@ -167,8 +167,8 @@ impl Drop for ProverContext {
 
 // Should some of this logic live in boojum-cuda instead?
 fn set_l2_persistence_carveout(num_bytes: usize) -> CudaResult<()> {
-    use cudart::device::device_set_limit;
-    use cudart_sys::CudaLimit;
+    use era_cudart::device::device_set_limit;
+    use era_cudart_sys::CudaLimit;
     let l2_persist_max = get_context().l2_persist_max;
     let carveout = std::cmp::min(num_bytes, l2_persist_max);
     device_set_limit(CudaLimit::PersistingL2CacheSize, carveout)?;
@@ -176,9 +176,9 @@ fn set_l2_persistence_carveout(num_bytes: usize) -> CudaResult<()> {
 }
 
 fn set_l2_persistence(data: &DeviceSlice<F>, stream: &CudaStream) -> CudaResult<()> {
-    use cudart::execution::CudaLaunchAttribute;
-    use cudart_sys::CudaAccessPolicyWindow;
-    use cudart_sys::CudaAccessProperty;
+    use era_cudart::execution::CudaLaunchAttribute;
+    use era_cudart_sys::CudaAccessPolicyWindow;
+    use era_cudart_sys::CudaAccessProperty;
     let num_bytes = 8 * data.len();
     let stream_attribute = CudaLaunchAttribute::AccessPolicyWindow(CudaAccessPolicyWindow {
         base_ptr: data.as_ptr() as *mut std::os::raw::c_void,

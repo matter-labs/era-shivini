@@ -1,6 +1,6 @@
 use super::*;
 
-use cudart::stream::CudaStreamWaitEventFlags;
+use era_cudart::stream::CudaStreamWaitEventFlags;
 
 // ntt operations
 

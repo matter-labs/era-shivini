@@ -1,8 +1,8 @@
 use super::*;
 use boojum::worker::Worker;
-use cudart::execution::{launch_host_fn, HostFn};
-pub use cudart::memory::memory_copy_async;
-use cudart::stream::CudaStreamWaitEventFlags;
+use era_cudart::execution::{launch_host_fn, HostFn};
+pub use era_cudart::memory::memory_copy_async;
+use era_cudart::stream::CudaStreamWaitEventFlags;
 use std::intrinsics::copy_nonoverlapping;
 use std::mem::size_of;
 use std::ops::DerefMut;

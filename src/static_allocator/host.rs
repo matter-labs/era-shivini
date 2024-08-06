@@ -1,6 +1,6 @@
 use super::*;
-use cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use derivative::*;
+use era_cudart::memory::{CudaHostAllocFlags, HostAllocation};
 use std::alloc::{Allocator, Layout};
 
 use std::ptr::NonNull;
@@ -38,7 +38,7 @@ impl StaticHostAllocator {
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        use cudart::slice::CudaSlice;
+        use era_cudart::slice::CudaSlice;
         self.memory.as_ptr()
     }
 

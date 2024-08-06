@@ -1082,7 +1082,7 @@ impl<A: GoodAllocator> GpuProof<A> {
 
         assert_eq!(
             num_queries,
-            query_details.iter().map(|coset| coset.len()).sum()
+            query_details.iter().map(|coset| coset.len()).sum::<usize>()
         );
         let typical_capacity_for_merkle_caps = merkle_tree_cap_size;
         // it is guaranteed that number of leaf elems is the largest in the witness tree than other trees

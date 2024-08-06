@@ -1,13 +1,13 @@
 use super::*;
 
 use boojum::cs::implementations::pow::PoWRunner;
-use cudart::slice::DeviceVariable;
+use era_cudart::slice::DeviceVariable;
 
 pub struct DeviceBlake2sPOW;
 
 impl PoWRunner for DeviceBlake2sPOW {
     fn run_from_bytes(h_seed: Vec<u8>, pow_bits: u32, _worker: &boojum::worker::Worker) -> u64 {
-        use cudart::slice::DeviceSlice;
+        use era_cudart::slice::DeviceSlice;
         let _seed_len = h_seed.len();
         let unit_len = std::mem::size_of::<F>();
         assert_eq!(h_seed.len() % unit_len, 0);
