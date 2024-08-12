@@ -306,9 +306,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "circuit_definitions"
-version = "0.150.2-rc.3"
+version = "0.150.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c5da9d10ee04601445afac76591f838b4f64f4f8fb8c3d1b3414a260d51b6c"
+checksum = "382960e9ff16705f95157bac88d2b0b556181229019eb57db6c990e3a0fff35f"
 dependencies = [
  "circuit_encodings",
  "crossbeam 0.8.4",
@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "circuit_encodings"
-version = "0.150.2-rc.3"
+version = "0.150.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c928cad0aeeb35e86f8605376fdbb27b506cfcec14af1f532459a47e34d8b6f9"
+checksum = "2ba840a74f8d0b8b1334e93e4c87514a27c9be83d42d9f78d0c577572bb5f435"
 dependencies = [
  "derivative",
  "serde",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "shivini"
-version = "0.150.2-rc3"
+version = "0.150.3"
 dependencies = [
  "bincode",
  "blake2 0.10.6",
@@ -2210,9 +2210,9 @@ dependencies = [
 
 [[package]]
 name = "zkevm_circuits"
-version = "0.150.2"
+version = "0.150.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94d97632ba26e4e6a77a680d6b2bfbcc6f7b9b722976ee31afb922d16a675d45"
+checksum = "f2d64bda28dec766324d2e5095a46fb141540d86a232106760dfb20ab4ae6e5c"
 dependencies = [
  "arrayvec 0.7.4",
  "boojum",
