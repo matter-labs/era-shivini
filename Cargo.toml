@@ -1,6 +1,6 @@
 [package]
 name = "shivini"
-version = "0.150.2-rc3"
+version = "0.150.3"
 edition = "2021"
 authors = ["The Matter Labs Team <hello@matterlabs.dev>"]
 homepage = "https://zksync.io/"
@@ -18,7 +18,7 @@ boojum = "=0.2.2"
 boojum-cuda = "=0.2.0"
 era_cudart = "=0.2.0"
 era_cudart_sys = "=0.2.0"
-circuit_definitions = { version = "=0.150.2-rc.3", package = "circuit_definitions", optional = true }
+circuit_definitions = { version = "=0.150.2", package = "circuit_definitions", optional = true }
 
 rand = "0.8"
 smallvec = { version = "1.13", features = [
