@@ -1,3 +1,7 @@
+> [!WARNING]
+> This repository has been archived. Development has moved to the [zksync-crypto-gpu](https://github.com/matter-labs/zksync-crypto-gpu) repository.
+> Please use it instead.
+
 # zkSync Era: A ZK Rollup For Scaling Ethereum
 
 [![Logo](eraLogo.png)](https://zksync.io/)
